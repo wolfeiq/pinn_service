@@ -1,0 +1,94 @@
+"""Damped oscillator inverse problem: discover ``c`` and ``k`` from noisy ``x(t)``.
+
+ODE: ``m·ẍ + c·ẋ + k·x = 0`` with ``m`` known, ``c, k`` unknown.
+"""
+from __future__ import annotations
+
+from pinn_engine.dsl.symbols import Variable, Parameter, Unknown, Sensor
+from pinn_engine.dsl.system import System
+from pinn_engine.dsl.templates import register_template
+from pinn_engine.core.trainer import TrainConfig
+
+
+def build_system() -> System:
+    t = Variable("t")
+    x = Variable("x", depends_on=t)
+    m = Parameter("m", value=1.0)
+    # NOTE: bounds matter as an *init prior*. PINA initializes each unknown to
+    # the midpoint of its bounds; loose bounds = bad init = slow / no
+    # convergence. With (0,1.5) and (0,20), midpoint inits are 0.75 and 10 —
+    # close enough to the truth (0.5, 10) for the physics gradient to lock on.
+    c = Unknown("c", bounds=(0.0, 1.5))
+    k = Unknown("k", bounds=(0.0, 20.0))
+    return System(
+        state=[x],
+        equations=[m * x.dd + c * x.d + k * x],
+        sensors=[Sensor("x_meas", observes=x, noise_std=0.01)],
+    )
+
+
+@register_template("damped_oscillator")
+class DampedOscillator:
+    """Damped harmonic oscillator. Fast inverse benchmark; ~45 s on CPU at 800 epochs."""
+
+    truth = {"c": 0.5, "k": 10.0}
+    unknown_bounds = {"c": (0.0, 1.5), "k": (0.0, 20.0)}
+
+    @staticmethod
+    def system() -> System:
+        return build_system()
+
+    @staticmethod
+    def default_config() -> TrainConfig:
+        return TrainConfig(
+            depth=4,
+            width=64,
+            activation="sintanh",
+            lr=2e-3,
+            adam_epochs=3000,
+            lbfgs_iters=0,  # L-BFGS incompatible with PINA InverseProblem
+            balancer="none",
+            t_range=(0.0, 5.0),
+            n_collocation=2000,
+            batch_size=256,
+            # Data-loss-dominant: prevents the network from collapsing to
+            # x(t)≈0 (the trivial solution that satisfies any (c, k) with zero
+            # physics residual but doesn't fit the observed data). Without
+            # this the inverse problem has no signal to update the unknowns.
+            lam_data_init=100.0,
+            lam_physics_init=1.0,
+        )
+
+    @staticmethod
+    def synthetic_data(seed: int = 0):
+        from pinn_engine.data.synthetic import generate_damped_oscillator
+        return generate_damped_oscillator(seed=seed)
+
+    @staticmethod
+    def automl_space(trial):
+        """Return a :class:`TrainConfig` sampled from this trial."""
+        return TrainConfig(
+            depth=trial.suggest_int("depth", 3, 7),
+            width=trial.suggest_categorical("width", [32, 64, 128, 256]),
+            activation=trial.suggest_categorical(
+                "activation", ["tanh", "sin", "sintanh", "swish"]
+            ),
+            lr=trial.suggest_float("lr", 1e-4, 1e-2, log=True),
+            adam_epochs=2000,
+            lbfgs_iters=0,
+            balancer=trial.suggest_categorical("balancer", ["none", "sapinn", "lra"]),
+            t_range=(0.0, 5.0),
+            n_collocation=1500,
+            batch_size=256,
+            seed=trial.suggest_int("seed", 0, 9999),
+        )
+
+    @staticmethod
+    def objective(result) -> float:
+        """Mean absolute relative error against ``truth``."""
+        truth = DampedOscillator.truth
+        errs = [
+            abs(result.final_params[name] - val) / max(abs(val), 1e-6)
+            for name, val in truth.items()
+        ]
+        return float(sum(errs) / len(errs))

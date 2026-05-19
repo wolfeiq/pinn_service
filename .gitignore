@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+.venv/
+venv/
+
+# runtime artifacts
+manifests/*.json
+manifests/*.npz
+manifests/*.db
+manifests/*.db-journal
+lightning_logs/
+
+# OS
+.DS_Store
