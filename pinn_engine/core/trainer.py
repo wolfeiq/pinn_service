@@ -26,6 +26,25 @@ from pina.solver import PINN as PinaPINN
 from pina.optim import TorchOptimizer
 from pina.loss import ScalarWeighting
 
+
+class LabeledDataPINN(PinaPINN):
+    """PINN solver that respects LabelTensor labels in data conditions.
+
+    PINA's stock ``loss_data`` MSE's the full network output against the
+    target. For multi-output systems (e.g. Lorenz: 3 states) with per-state
+    sensors (each target is a single column), this broadcasts wrong:
+    ``(N, 3)`` vs ``(N, 1)``. Here we extract only the columns of the network
+    output whose labels appear in the target's labels before computing MSE.
+    """
+
+    def loss_data(self, input, target):
+        out = self.forward(input)
+        if hasattr(target, "labels") and hasattr(out, "labels"):
+            cols = [c for c in target.labels if c in out.labels]
+            if cols and len(cols) != len(out.labels):
+                out = out.extract(cols)
+        return self._loss_fn(out, target)
+
 from pinn_engine.dsl.system import System, CompiledSystem
 from pinn_engine.core.networks import build_network
 from pinn_engine.core.problem import build_problem
@@ -148,7 +167,7 @@ def train(
             cond_weights[cname] = 1.0
     weighting = ScalarWeighting(cond_weights)
 
-    solver = PinaPINN(
+    solver = LabeledDataPINN(
         problem=problem,
         model=network,
         optimizer=TorchOptimizer(torch.optim.Adam, lr=config.lr),
