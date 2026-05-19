@@ -66,20 +66,28 @@ class DampedOscillator:
 
     @staticmethod
     def automl_space(trial):
-        """Return a :class:`TrainConfig` sampled from this trial."""
+        """Return a :class:`TrainConfig` sampled from this trial.
+
+        Includes ``lam_data_init`` because data-dominant weighting is what
+        unlocks inverse-PINN convergence (without it, the network collapses
+        to x≈0 — see README "Why your bounds matter"). The hand-tuned
+        default uses 100.0; the AutoML range covers 10-1000 log-scale.
+        """
         return TrainConfig(
-            depth=trial.suggest_int("depth", 3, 7),
-            width=trial.suggest_categorical("width", [32, 64, 128, 256]),
+            depth=trial.suggest_int("depth", 3, 6),
+            width=trial.suggest_categorical("width", [32, 64, 128]),
             activation=trial.suggest_categorical(
-                "activation", ["tanh", "sin", "sintanh", "swish"]
+                "activation", ["tanh", "sintanh", "swish"]
             ),
-            lr=trial.suggest_float("lr", 1e-4, 1e-2, log=True),
-            adam_epochs=2000,
+            lr=trial.suggest_float("lr", 5e-4, 5e-3, log=True),
+            lam_data_init=trial.suggest_float("lam_data_init", 10.0, 1000.0, log=True),
+            lam_physics_init=1.0,
+            adam_epochs=800,  # was 2000 — shorter so trials are 30-90s each
             lbfgs_iters=0,
             balancer=trial.suggest_categorical("balancer", ["none", "sapinn", "lra"]),
             t_range=(0.0, 5.0),
             n_collocation=1500,
-            batch_size=256,
+            batch_size=512,
             seed=trial.suggest_int("seed", 0, 9999),
         )
 

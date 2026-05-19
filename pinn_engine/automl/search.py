@@ -33,7 +33,7 @@ from pinn_engine.dsl.templates import get_template
 from pinn_engine.repro.manifest import write_manifest, MANIFEST_DIR
 
 
-def _objective(trial, template_name: str, data, monitor: str = "train_loss"):
+def _objective(trial, template_name: str, data, monitor: str = "train_loss_epoch"):
     template = get_template(template_name)
     config = template.automl_space(trial)
     system = template.system()
@@ -66,7 +66,7 @@ def run_search(
     storage_dir: Optional[Path] = None,
     data=None,
     seed: int = 42,
-    monitor: str = "train_loss",
+    monitor: str = "train_loss_epoch",
 ) -> optuna.Study:
     """Run an Optuna study over the template's AutoML space."""
     template = get_template(template_name)
