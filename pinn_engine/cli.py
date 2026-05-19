@@ -113,7 +113,7 @@ def inspect(manifest: Path = typer.Argument(..., exists=True, readable=True)) ->
 @app.command()
 def verify(
     manifest: Path = typer.Argument(..., exists=True, readable=True),
-    tol: float = typer.Option(1e-3, help="Per-parameter relative tolerance."),
+    tol: float = typer.Option(5e-2, help="Per-parameter relative tolerance. Default 5%% — tighter is unrealistic with non-deterministic ops on MPS/CPU."),
     adam_epochs: Optional[int] = typer.Option(None, help="Override the template's default adam_epochs for the re-run."),
 ) -> None:
     """Re-run the trial described by ``manifest`` and assert the discovered params match."""
