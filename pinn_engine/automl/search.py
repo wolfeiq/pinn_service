@@ -21,13 +21,9 @@ from typing import Optional
 import optuna
 from optuna.samplers import TPESampler
 
-# The integration package re-exports the PL pruning callback.
-try:
-    from optuna_integration.pytorch_lightning import PyTorchLightningPruningCallback
-except ImportError:  # older optuna versions
-    from optuna.integration import PyTorchLightningPruningCallback  # type: ignore
-
-from pinn_engine.automl.pruning import NanGuard, ParamDivergenceGuard
+from pinn_engine.automl.pruning import (
+    NanGuard, ParamDivergenceGuard, TrainLossPruningCallback,
+)
 from pinn_engine.diagnostics import default_bundle
 from pinn_engine.dsl.templates import get_template
 from pinn_engine.repro.manifest import write_manifest, MANIFEST_DIR
@@ -42,7 +38,10 @@ def _objective(trial, template_name: str, data, monitor: str = "train_loss_epoch
     callbacks = default_bundle() + [
         NanGuard(),
         ParamDivergenceGuard(bounds=bounds),
-        PyTorchLightningPruningCallback(trial, monitor=monitor),
+        # Our own train-loss-based pruning callback. Upstream
+        # PyTorchLightningPruningCallback only reports on val epochs, which
+        # PINN inverse problems typically don't have.
+        TrainLossPruningCallback(trial, report_every=100, monitor=monitor),
     ]
 
     # Local import to avoid circular dependencies on tooling-only paths.

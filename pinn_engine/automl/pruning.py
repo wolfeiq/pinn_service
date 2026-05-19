@@ -60,3 +60,45 @@ class ParamDivergenceGuard(pl.Callback):
                     f"Param {name!r} diverged: value={val:.3g} outside "
                     f"{self.factor}× the declared bound {(lo, hi)!r}"
                 )
+
+
+class TrainLossPruningCallback(pl.Callback):
+    """Report ``train_loss_epoch`` to Optuna and prune on its judgment.
+
+    Stand-in for ``PyTorchLightningPruningCallback`` which only fires on
+    validation epochs — but PINN inverse problems typically have no
+    val_dataloader, so the upstream callback silently never reports.
+
+    This version reports the train loss every ``report_every`` epochs.
+    """
+
+    name = "train_loss_pruning"
+
+    def __init__(self, trial, report_every: int = 50, monitor: str = "train_loss_epoch"):
+        super().__init__()
+        self.trial = trial
+        self.report_every = int(report_every)
+        self.monitor = monitor
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        epoch = trainer.current_epoch
+        if (epoch + 1) % self.report_every != 0:
+            return
+        metrics = trainer.callback_metrics
+        if self.monitor not in metrics:
+            # Try a couple of fallbacks before giving up silently.
+            for fallback in ("train_loss", "loss", "loss_epoch"):
+                if fallback in metrics:
+                    val = float(metrics[fallback])
+                    break
+            else:
+                return
+        else:
+            val = float(metrics[self.monitor])
+        if math.isnan(val) or math.isinf(val):
+            return  # NanGuard handles it
+        self.trial.report(val, step=epoch)
+        if self.trial.should_prune():
+            raise optuna.TrialPruned(
+                f"Pruned at epoch {epoch} with {self.monitor}={val:.4g}"
+            )
