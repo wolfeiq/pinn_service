@@ -32,6 +32,8 @@ def train(
     lbfgs_iters: Optional[int] = typer.Option(None, help="Override lbfgs_iters."),
     manifest: Optional[Path] = typer.Option(None, help="Write manifest to this file."),
     skip_preflight: bool = typer.Option(False, help="Skip the well-posedness check."),
+    export_onnx: Optional[Path] = typer.Option(None, help="After training, export the network to this .onnx path."),
+    export_torchscript: Optional[Path] = typer.Option(None, help="After training, export the network to this .pt path (TorchScript)."),
 ) -> None:
     """Run a single training trial for a template's synthetic data."""
     tpl = get_template(template)
@@ -57,6 +59,15 @@ def train(
         out = manifest
 
     _print_result(result, truth, out)
+
+    if export_onnx is not None:
+        from pinn_engine.export import to_onnx
+        path = to_onnx(result, export_onnx)
+        rprint(f"[bold]Exported ONNX:[/bold] {path} (sidecar: {path.with_suffix('.json')})")
+    if export_torchscript is not None:
+        from pinn_engine.export import to_torchscript
+        path = to_torchscript(result, export_torchscript)
+        rprint(f"[bold]Exported TorchScript:[/bold] {path} (sidecar: {path.with_suffix('.json')})")
 
 
 @app.command()
