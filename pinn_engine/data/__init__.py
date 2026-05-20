@@ -4,10 +4,11 @@ from pinn_engine.data.synthetic import (
     generate_lorenz,
     generate_diffusion_1d,
     generate_fossen_surge,
+    generate_pendulum,
 )
 
 __all__ = [
     "load_data", "validate_against_system",
     "generate_damped_oscillator", "generate_lorenz", "generate_diffusion_1d",
-    "generate_fossen_surge",
+    "generate_fossen_surge", "generate_pendulum",
 ]

@@ -71,6 +71,36 @@ def train(
 
 
 @app.command()
+def ensemble(
+    template: str = typer.Argument(..., help="Template name."),
+    n_models: int = typer.Option(5, help="Number of ensemble members."),
+    adam_epochs: Optional[int] = typer.Option(None, help="Override adam_epochs."),
+) -> None:
+    """Train an ensemble of N PINNs and report the parameter mean ± std."""
+    from pinn_engine.uq import train_ensemble
+
+    tpl = get_template(template)
+    system = tpl.system()
+    data, truth = tpl.synthetic_data(seed=0)
+    config = tpl.default_config()
+    if adam_epochs is not None:
+        config = config.model_copy(update={"adam_epochs": adam_epochs})
+    result = train_ensemble(
+        system=system, data=data, config=config, n_models=n_models,
+    )
+    rprint(f"\n[bold]{result.summary_table()}[/bold]")
+    if truth:
+        rprint("\n[dim]Truth:[/dim]")
+        for name, val in truth.items():
+            est = result.parameter_estimates.get(name, {})
+            mean = est.get("mean", float("nan"))
+            std = est.get("std", float("nan"))
+            within = abs(mean - val) <= 2 * std
+            mark = "[green]within 2σ[/green]" if within else "[red]>2σ off[/red]"
+            rprint(f"  {name}: truth={val:.4g}  estimate={mean:.4g}±{std:.2g}  {mark}")
+
+
+@app.command()
 def search(
     template: str = typer.Argument(..., help="Template name."),
     n_trials: int = typer.Option(20, help="Number of Optuna trials."),

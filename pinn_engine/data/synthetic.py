@@ -79,6 +79,37 @@ def generate_lorenz(
     }, {"sigma": sigma, "rho": rho, "beta": beta}
 
 
+# -------------------------------------------------------------- pendulum with friction
+
+
+def generate_pendulum(
+    c: float = 0.3,
+    I: float = 1.0,
+    mgL: float = 10.0,
+    theta0: float = 1.0,
+    omega0: float = 0.0,
+    t_end: float = 10.0,
+    n_samples: int = 1000,
+    noise_std: float = 0.01,
+    seed: int = 0,
+):
+    """Forward-simulate ``I·θ̈ + c·θ̇ + m·g·L·sin(θ) = 0`` with i.i.d. noise on θ."""
+    rng = np.random.default_rng(seed)
+
+    def rhs(t, y):
+        theta, omega = y
+        return [omega, -(c / I) * omega - (mgL / I) * np.sin(theta)]
+
+    t = np.linspace(0.0, t_end, n_samples)
+    sol = solve_ivp(rhs, (0.0, t_end), [theta0, omega0], t_eval=t, rtol=1e-9, atol=1e-11)
+    theta_clean = sol.y[0]
+    theta_noisy = theta_clean + rng.normal(0.0, noise_std, size=theta_clean.shape)
+    return (
+        {"theta_meas": (t.astype(np.float32), theta_noisy.astype(np.float32))},
+        {"c": c},
+    )
+
+
 # -------------------------------------------------------------- fossen surge (AUV 1-DOF)
 
 
