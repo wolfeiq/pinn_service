@@ -26,6 +26,8 @@ from pina.solver import PINN as PinaPINN
 from pina.optim import TorchOptimizer
 from pina.loss import ScalarWeighting
 
+from pinn_engine.core.weightings import SAPinnWeighting, LRAWeighting
+
 
 class LabeledDataPINN(PinaPINN):
     """PINN solver that respects LabelTensor labels in data conditions.
@@ -105,21 +107,29 @@ class TrainResult:
     network: Optional[Any] = None  # the trained MLP
     compiled: Optional[CompiledSystem] = None
     config: Optional[TrainConfig] = None
+    weighting: Optional[Any] = None  # the PINA WeightingInterface — has .history for dynamics
 
     @property
     def objective_value(self) -> float:
         return self.final_loss
 
 
-def _select_balancer(name: str) -> Optional[pl.Callback]:
-    from pinn_engine.core.loss_balancer import SAPinnBalancer, LRABalancer
+def _build_weighting(name: str, cond_weights: Dict[str, float]):
+    """Pick the weighting strategy for the PINA solver.
 
+    * ``"none"`` → static :class:`ScalarWeighting` using ``cond_weights``.
+    * ``"sapinn"`` → dynamic SA-PINN with learnable λ per condition. Initialised
+      from ``cond_weights`` so the user's static prior is the starting point.
+    * ``"lra"`` → Wang-Teng-Perdikaris LRA via gradient-norm ratio.
+    """
     if name == "none":
-        return None
+        return ScalarWeighting(cond_weights)
     if name == "sapinn":
-        return SAPinnBalancer()
+        # Initialise λ from the static cond_weights (mean of values) so SA-PINN
+        # starts from a known-good operating point rather than λ=1 everywhere.
+        return SAPinnWeighting(lam_init=max(1.0, max(cond_weights.values()) / 10.0))
     if name == "lra":
-        return LRABalancer()
+        return LRAWeighting(alpha=0.9, lam_init=1.0)
     raise ValueError(f"Unknown balancer {name!r}")
 
 
@@ -151,12 +161,10 @@ def train(
     if not config.skip_preflight:
         check_wellposedness(problem, network, compiled)
 
-    bal_cb = _select_balancer(config.balancer)
-    if bal_cb is not None:
-        callbacks.append(bal_cb)
-
-    # Build per-condition static weights from TrainConfig (data conditions
+    # Build per-condition initial weights from TrainConfig (data conditions
     # get ``lam_data_init``, physics conditions get ``lam_physics_init``).
+    # These become the static weights for balancer="none", and the starting
+    # point for sapinn / lra dynamic balancers.
     cond_weights = {}
     for cname in problem.conditions.keys():
         if cname.startswith("data_"):
@@ -165,7 +173,8 @@ def train(
             cond_weights[cname] = float(config.lam_physics_init)
         else:
             cond_weights[cname] = 1.0
-    weighting = ScalarWeighting(cond_weights)
+
+    weighting = _build_weighting(config.balancer, cond_weights)
 
     solver = LabeledDataPINN(
         problem=problem,
@@ -176,6 +185,9 @@ def train(
     # Make context available to our diagnostic callbacks.
     solver._compiled_system = compiled
     solver._engine_data = data
+    # Stash the weighting on the solver so diagnostic callbacks can inspect
+    # its history without re-grepping logs.
+    solver._engine_weighting = weighting
 
     trainer_adam = PinaTrainer(
         solver=solver,
@@ -224,7 +236,7 @@ def train(
             devices=config.devices,
             deterministic=config.deterministic,
             log_every_n_steps=config.log_every_n_steps,
-            callbacks=[cb for cb in callbacks if cb is not bal_cb],
+            callbacks=callbacks,
             enable_progress_bar=True,
             batch_size=config.batch_size,
         )
@@ -254,4 +266,5 @@ def train(
         network=network,
         compiled=compiled,
         config=config,
+        weighting=weighting,
     )
