@@ -71,6 +71,25 @@ def train(
 
 
 @app.command()
+def dashboard(
+    port: int = typer.Option(8501, help="Streamlit server port."),
+    host: str = typer.Option("localhost", help="Host to bind."),
+) -> None:
+    """Launch the Streamlit dashboard for browsing manifests + AutoML studies."""
+    import subprocess
+    app_path = Path(__file__).parent / "dashboard" / "app.py"
+    if not app_path.exists():
+        rprint(f"[red]Dashboard app not found at {app_path}[/red]")
+        raise typer.Exit(code=1)
+    rprint(f"[bold]Launching dashboard at http://{host}:{port}[/bold]")
+    subprocess.run([
+        "streamlit", "run", str(app_path),
+        "--server.address", host, "--server.port", str(port),
+        "--browser.gatherUsageStats", "false",
+    ])
+
+
+@app.command()
 def ensemble(
     template: str = typer.Argument(..., help="Template name."),
     n_models: int = typer.Option(5, help="Number of ensemble members."),
