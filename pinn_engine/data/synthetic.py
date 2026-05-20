@@ -79,6 +79,44 @@ def generate_lorenz(
     }, {"sigma": sigma, "rho": rho, "beta": beta}
 
 
+# -------------------------------------------------------------- fossen surge (AUV 1-DOF)
+
+
+def generate_fossen_surge(
+    X_u: float = -10.0,
+    X_uu: float = -30.0,
+    m_eff: float = 45.0,
+    tau_u: float = 10.0,
+    t_end: float = 10.0,
+    n_samples: int = 1000,
+    noise_std: float = 0.02,
+    seed: int = 0,
+):
+    """Forward-simulate Fossen 1-DOF surge dynamics.
+
+    ODE: ``m_eff · u̇ − X_u · u − X_uu · u² − τ_u = 0`` with ``u(0) = 0``.
+    With Fossen-convention negative drag coefficients, the vehicle
+    accelerates from rest and asymptotes to a steady-state forward
+    velocity ``u_ss`` set by ``τ_u + X_u · u + X_uu · u² = 0``.
+
+    Returns ``(data, truth)`` where data has one sensor ``u_meas``.
+    """
+    rng = np.random.default_rng(seed)
+
+    def rhs(t, y):
+        (u,) = y
+        return [(tau_u + X_u * u + X_uu * u * u) / m_eff]
+
+    t = np.linspace(0.0, t_end, n_samples)
+    sol = solve_ivp(rhs, (0.0, t_end), [0.0], t_eval=t, rtol=1e-9, atol=1e-11)
+    u_clean = sol.y[0]
+    u_noisy = u_clean + rng.normal(0.0, noise_std, size=u_clean.shape)
+    return (
+        {"u_meas": (t.astype(np.float32), u_noisy.astype(np.float32))},
+        {"X_u": X_u, "X_uu": X_uu},
+    )
+
+
 # -------------------------------------------------------------- 1d diffusion (placeholder)
 
 
