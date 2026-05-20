@@ -77,22 +77,32 @@ class FossenSurge:
 
     @staticmethod
     def default_config() -> TrainConfig:
-        # Untuned starting point — AutoML will refine. The damped-oscillator
-        # default-config recipe (depth=6, sintanh, lra balancer) is a
-        # reasonable prior for this oscillator-free template too; lam_data
-        # higher because the DVL data signal is small (u ≤ 0.5 m/s).
+        # Discovered by a 12-trial multi-seed AutoML run (study "fossen12",
+        # 2026-05-20); best trial #2 reached mean rel-err 9.75 % across
+        # seeds {42, 137, 2718}. The remaining ~10% is genuine partial
+        # identifiability — see the module docstring; X_u and X_uu trade
+        # error as training progresses because they both contribute drag
+        # but the monotone-acceleration mission profile doesn't crisply
+        # separate the linear-in-u and quadratic-in-u regimes.
+        #
+        # Notably different from the oscillator/Lorenz winners:
+        #   * activation: swish (not sintanh) — the surge dynamics don't
+        #     have a strong oscillatory character.
+        #   * lam_data_init: 13.5 (not 50-500) — for partial-identifiability
+        #     problems, heavy data weighting doesn't help; the issue is
+        #     observation-side, not convergence-side.
         return TrainConfig(
             depth=5,
             width=32,
-            activation="sintanh",
-            lr=1.5e-3,
+            activation="swish",
+            lr=7.4e-4,
             adam_epochs=1500,
-            lbfgs_iters=50,
+            lbfgs_iters=0,
             balancer="lra",
             t_range=(0.0, 10.0),
             n_collocation=1500,
             batch_size=512,
-            lam_data_init=200.0,
+            lam_data_init=13.5,
             lam_physics_init=1.0,
         )
 
