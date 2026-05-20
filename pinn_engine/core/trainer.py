@@ -47,6 +47,33 @@ class LabeledDataPINN(PinaPINN):
                 out = out.extract(cols)
         return self._loss_fn(out, target)
 
+
+class LBFGSInversePINN(LabeledDataPINN):
+    """L-BFGS-compatible PINN solver for inverse problems.
+
+    PINA's stock ``configure_optimizers`` attaches the network parameters
+    to the optimizer and *then* adds ``unknown_parameters`` as a second
+    ``param_group`` via ``add_param_group``. That's fine for Adam, but
+    ``torch.optim.LBFGS`` asserts ``len(param_groups) == 1`` and crashes.
+
+    This subclass merges network params + unknown_parameters into a single
+    flat iterable BEFORE the optimizer is hooked, so L-BFGS sees one group
+    and is happy. Inherits ``loss_data`` from :class:`LabeledDataPINN` so
+    multi-output Lorenz-style problems still work.
+    """
+
+    def configure_optimizers(self):
+        from pina.problem import InverseProblem
+
+        all_params = list(self.model.parameters())
+        if isinstance(self.problem, InverseProblem) and self._params is not None:
+            for var in self.problem.unknown_variables:
+                all_params.append(self._params[var])
+
+        self.optimizer.hook(all_params)
+        self.scheduler.hook(self.optimizer)
+        return ([self.optimizer.instance], [self.scheduler.instance])
+
 from pinn_engine.dsl.system import System, CompiledSystem
 from pinn_engine.core.networks import build_network
 from pinn_engine.core.problem import build_problem
@@ -202,23 +229,23 @@ def train(
     )
     trainer_adam.train()
 
-    # Optional L-BFGS finetune. Skipped when the problem has inverse
-    # unknowns: PINA's solver attaches `unknown_parameters` as a second
-    # `param_group`, but torch's L-BFGS asserts `len(param_groups) == 1`.
-    # Until that's resolved upstream (or we ship a custom solver that
-    # merges param groups for L-BFGS), Adam is the only supported phase
-    # for inverse problems.
+    # Optional L-BFGS finetune. Inverse problems route through
+    # LBFGSInversePINN, which merges model params + unknown_parameters
+    # into a single optimizer param_group (torch.optim.LBFGS asserts
+    # ``len(param_groups) == 1``).
     has_unknowns = bool(getattr(problem, "unknown_parameters", {}))
-    if config.lbfgs_iters > 0 and has_unknowns:
-        import warnings as _w
-        _w.warn(
-            "L-BFGS finetune skipped: incompatible with PINA's InverseProblem "
-            "(adds unknown_parameters as a second param_group, which torch.LBFGS "
-            "does not support). Use Adam-only for inverse problems.",
-            RuntimeWarning,
-        )
-    if config.lbfgs_iters > 0 and not has_unknowns:
-        lbfgs_solver = PinaPINN(
+    if config.lbfgs_iters > 0:
+        # Freeze the weighting before L-BFGS. Quasi-Newton expects a static
+        # loss surface; an adaptive balancer (SAPinnWeighting / LRAWeighting)
+        # changing weights every step breaks L-BFGS's history approximation.
+        if isinstance(weighting, (SAPinnWeighting, LRAWeighting)) and weighting.history:
+            frozen_weights = dict(weighting.history[-1])
+            lbfgs_weighting = ScalarWeighting(frozen_weights)
+        else:
+            lbfgs_weighting = weighting  # already static (ScalarWeighting)
+
+        SolverCls = LBFGSInversePINN if has_unknowns else LabeledDataPINN
+        lbfgs_solver = SolverCls(
             problem=problem,
             model=network,
             optimizer=TorchOptimizer(
@@ -228,7 +255,11 @@ def train(
                 history_size=50,
                 line_search_fn="strong_wolfe",
             ),
+            weighting=lbfgs_weighting,
         )
+        lbfgs_solver._compiled_system = compiled
+        lbfgs_solver._engine_data = data
+        lbfgs_solver._engine_weighting = lbfgs_weighting
         trainer_lbfgs = PinaTrainer(
             solver=lbfgs_solver,
             max_epochs=1,
