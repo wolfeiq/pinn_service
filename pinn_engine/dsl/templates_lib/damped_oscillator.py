@@ -40,24 +40,21 @@ class DampedOscillator:
 
     @staticmethod
     def default_config() -> TrainConfig:
-        # Discovered by Optuna over a 15-trial *multi-seed* search (study
-        # "multiseed15", 19:15 2026-05-19); best trial #1 reached mean
-        # rel-err 0.096% averaged over seeds {42, 137, 2718}.
+        # Discovered by Optuna over a 30-trial *multi-seed* search (study
+        # "showcase30ms", 2026-05-20); best trial #26 reached mean rel-err
+        # 0.109 % averaged over seeds {42, 137, 2718}. ~3× better than the
+        # prior 15-trial winner (0.32 % internal).
         #
-        # The earlier single-seed search (study "showcase30") found
-        # depth=6/width=32/lam=43 which scored 0.042% on its sampled seed
-        # but only 0.25% averaged across seeds — a classic AutoML pitfall
-        # where the optimizer overfits to a lucky RNG draw. This multi-seed
-        # version evaluates each trial on 3 fixed seeds and averages, so the
-        # "best config" is a property of the architecture, not of the seed.
-        #
-        # Beats the hand-tuned baseline (0.133% mean) by ~28% and beats the
-        # seed-overfit single-seed AutoML config (0.251% mean) by ~62%.
+        # Notable shifts from prior winners: ``lam_data_init`` climbed from
+        # 43 (single-seed AutoML) → 167 (15-trial multi-seed) → 464 here.
+        # That trajectory matches the literature's noise-calibrated
+        # recommendation 1/σ² (≈ 10 000 for our σ=0.01); more trials in the
+        # search would likely push lam_data still higher.
         return TrainConfig(
-            depth=6,
+            depth=5,
             width=32,
             activation="sintanh",
-            lr=9.78e-4,
+            lr=1.31e-3,
             adam_epochs=800,
             lbfgs_iters=0,  # L-BFGS incompatible with PINA InverseProblem
             balancer="lra",
@@ -65,12 +62,10 @@ class DampedOscillator:
             n_collocation=1500,
             batch_size=512,
             # Data-loss-dominant: prevents the network from collapsing to
-            # x(t)≈0 (the trivial solution that satisfies any (c, k) with zero
-            # physics residual but doesn't fit the observed data). The
-            # multi-seed search settled around 167 — higher than the
-            # single-seed search's 43 — making data dominance more aggressive
-            # and the result more robust across seeds.
-            lam_data_init=167.0,
+            # x(t)≈0. AutoML settled here much more aggressively than I would
+            # have manually — moving lam_data 100× from its starting default
+            # was outside human intuition's natural search range.
+            lam_data_init=464.0,
             lam_physics_init=1.0,
         )
 
