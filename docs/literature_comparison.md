@@ -222,10 +222,53 @@ Two cases where we deviated from what literature would predict:
 | Run | Manifest / Study | Command |
 |---|---|---|
 | Showcase 30-trial AutoML | `manifests/optuna_showcase30.db` | `pinn-engine search damped_oscillator --n-trials 30 --study showcase30` |
+| Honest 30-trial AutoML (LRA wired) | `manifests/optuna_honest30ms.db` | `pinn-engine search damped_oscillator --n-trials 30 --study honest30ms` |
 | Baked-in default config | `damped_oscillator.default_config()` | `pinn-engine train damped_oscillator` |
 | Lorenz 3-state inverse | (master pipeline output) | `python examples/02_lorenz_inverse.py` |
 
 Open the AutoML leaderboard live:
 ```
-optuna-dashboard sqlite:///manifests/optuna_showcase30.db
+optuna-dashboard sqlite:///manifests/optuna_honest30ms.db
 ```
+
+---
+
+## Device sensitivity — a real caveat
+
+The headline `0.100% mean rel-err` (study `honest30ms`, baked into
+`default_config`) was measured on **MPS (Apple Silicon GPU)**. The same
+config on **CPU** averages `0.404%` over the same 3 seeds — about 5×
+worse. Some observations:
+
+| Device | seed 42 | seed 137 | seed 2718 | Average | Time / seed |
+|---|---:|---:|---:|---:|---:|
+| CPU | 0.695 % | 0.051 % | 0.464 % | 0.404 % | 63 s |
+| MPS | 0.083 % | 0.016 % | 0.138 % | 0.079 % | 350 s |
+
+Two unusual things:
+
+1. **MPS is more accurate, not less.** Standard wisdom is "GPU = slightly
+   noisier accuracy, much faster." Here MPS is both more accurate *and*
+   slower. Likely cause: different float-op ordering / reductions on MPS
+   that happen to be numerically more stable for this problem class
+   (high-order derivatives in the residual amplify cancellation errors,
+   and MPS may use fused multiply-add internally).
+
+2. **CPU wins wall-clock.** For a 4.6K-param MLP, GPU dispatch overhead
+   per batch exceeds the compute saved. MPS only pays off for much
+   larger models (~10⁵ params and up). This is a small-model edge case;
+   we'd expect MPS to win on Phase-3 Fossen 6-DOF or Cosserat templates
+   where the network is bigger.
+
+**Honest framing for documentation / X-post:**
+- "Best result: 0.10 % mean rel-err on MPS (350 s per training run)"
+- "Throughput: 0.40 % mean rel-err on CPU (63 s per training run)"
+- "Both are reproducible from the seed list and the committed manifest."
+
+Don't quote one number as "the" headline without a device. The AutoML
+chose the config with `accelerator="auto"` (→ MPS on this hardware), so
+the reported numbers are MPS numbers.
+
+**Action item (deferred):** future AutoML runs should average across
+devices too if we want device-portable defaults. That's another ~2× the
+trial cost; worth doing for a v0.2 release.
