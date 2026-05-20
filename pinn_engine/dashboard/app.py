@@ -64,7 +64,7 @@ def _sidebar_pick_manifests() -> List[Path]:
 def _sidebar_pick_view() -> str:
     return st.sidebar.radio(
         "View",
-        ["Overview", "Parameters", "Convergence", "Compare", "AutoML"],
+        ["Overview", "Parameters", "Convergence", "Compare", "AutoML", "Equations", "Train"],
         index=0,
     )
 
@@ -353,6 +353,212 @@ def _view_automl() -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+# ============================================================ equations view
+
+
+_DEFAULT_DSL = '''\
+# Edit your inverse problem here. The engine looks for a name `system`.
+from pinn_engine.dsl import Variable, Parameter, Unknown, Sensor, System
+
+t = Variable("t")
+x = Variable("x", depends_on=t)
+m = Parameter("m", value=1.0)
+c = Unknown("c", bounds=(0.0, 1.5))
+k = Unknown("k", bounds=(0.0, 20.0))
+
+system = System(
+    state=[x],
+    equations=[m * x.dd + c * x.d + k * x],
+    sensors=[Sensor("x_meas", observes=x, noise_std=0.01)],
+)
+'''
+
+
+def _view_equations() -> None:
+    """Equation editor. Lets the user paste DSL code and compile it."""
+    st.title("Equations")
+    st.caption(
+        "Declare an inverse problem in the engine's symbolic DSL. The text "
+        "below is `exec`'d in a sandboxed namespace; the dashboard then "
+        "calls `system.compile()` and reports the structure."
+    )
+    code = st.text_area(
+        "DSL code",
+        value=st.session_state.get("dsl_code", _DEFAULT_DSL),
+        height=320,
+        key="dsl_code",
+    )
+    if st.button("Compile & validate", type="primary"):
+        # Sandboxed namespace: only the DSL primitives are available.
+        from pinn_engine.dsl import Variable, Parameter, Unknown, Sensor, System
+        from pinn_engine.dsl.system import SystemValidationError
+        import sympy as _sp
+
+        ns: dict = {
+            "Variable": Variable,
+            "Parameter": Parameter,
+            "Unknown": Unknown,
+            "Sensor": Sensor,
+            "System": System,
+            "sympy": _sp,
+            "sp": _sp,
+        }
+        try:
+            exec(code, ns)
+        except Exception as e:
+            st.error(f"`exec` failed: {type(e).__name__}: {e}")
+            return
+        system = ns.get("system")
+        if system is None:
+            st.error("No `system` variable was assigned in your code.")
+            return
+        try:
+            comp = system.compile()
+        except SystemValidationError as e:
+            st.error(f"Validation failed: {e}")
+            return
+        except Exception as e:
+            st.error(f"Compilation failed: {type(e).__name__}: {e}")
+            return
+        st.success("System compiled.")
+        cols = st.columns(3)
+        cols[0].metric("state variables", ", ".join(comp.state_names))
+        cols[1].metric("unknowns", ", ".join(comp.unknown_names))
+        cols[2].metric("physics residuals", len(comp.physics_residuals))
+        st.json(
+            {
+                "state": comp.state_names,
+                "input": comp.input_name,
+                "unknowns": comp.unknown_names,
+                "bounds": {k: list(v) for k, v in comp.unknown_bounds.items()},
+                "inits": comp.unknown_inits,
+                "sensors": [
+                    {"name": s.name, "noise_std": s.noise_std}
+                    for s in comp.sensors
+                ],
+                "equation_hash": comp.equation_hash[:16] + "…",
+            }
+        )
+        # Stash for the Train view to pick up.
+        st.session_state["compiled_system_code"] = code
+
+
+# ============================================================ train view (live)
+
+
+def _view_train() -> None:
+    """Kick off a training run from the dashboard and stream live progress."""
+    import json
+    import subprocess
+
+    st.title("Train")
+    st.caption(
+        "Launch a training run on a registered template. The CLI process is "
+        "spawned in the background and writes live status every 10 epochs "
+        "to `manifests/live_<run_id>.json`; the plots below auto-refresh."
+    )
+
+    from pinn_engine.dsl.templates import registry, get_template
+
+    if not registry:
+        import pinn_engine.dsl.templates_lib  # noqa: F401
+
+    template_names = sorted(registry.keys())
+    template = st.selectbox("Template", template_names, index=0)
+    cols = st.columns(3)
+    seed = cols[0].number_input("Seed", value=42, step=1, min_value=0, max_value=99_999)
+    adam_epochs = cols[1].number_input("Adam epochs", value=800, step=100, min_value=50)
+    lbfgs_iters = cols[2].number_input("L-BFGS iters", value=0, step=10, min_value=0)
+
+    if st.button("Start training", type="primary"):
+        cmd = [
+            sys.executable, "-m", "pinn_engine.cli", "train", template,
+            "--seed", str(seed),
+            "--adam-epochs", str(adam_epochs),
+            "--lbfgs-iters", str(lbfgs_iters),
+        ]
+        proc = subprocess.Popen(cmd, cwd=str(_pkg_root))
+        st.session_state["train_pid"] = proc.pid
+        st.session_state["train_started_at"] = pd.Timestamp.now()
+        st.success(f"Started PID {proc.pid}. Polling for live status…")
+
+    # Show live status of the most recent live_*.json (within last 5 minutes).
+    live_files = sorted(
+        manifests_dir().glob("live_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not live_files:
+        st.info("No live training files yet — kick off a run above.")
+        return
+
+    pick = st.selectbox(
+        "Live status file",
+        [p.name for p in live_files[:10]],
+        index=0,
+    )
+    live_path = manifests_dir() / pick
+    try:
+        payload = json.loads(live_path.read_text())
+    except Exception as e:
+        st.warning(f"Couldn't read {pick}: {e}")
+        return
+
+    status = payload.get("status", "?")
+    latest = payload.get("latest", {})
+    cols = st.columns(4)
+    cols[0].metric("status", status)
+    cols[1].metric("epoch", latest.get("epoch", "?"))
+    cols[2].metric(
+        "loss",
+        f"{latest.get('loss'):.4g}" if latest.get("loss") is not None else "—",
+    )
+    cols[3].metric("history len", len(payload.get("history", [])))
+
+    history = payload.get("history", [])
+    if history:
+        epochs = [h["epoch"] for h in history]
+        losses = [h["loss"] for h in history]
+
+        # Loss curve
+        fig_loss = go.Figure(
+            go.Scatter(x=epochs, y=losses, mode="lines+markers", name="loss")
+        )
+        fig_loss.update_layout(
+            xaxis_title="epoch",
+            yaxis_title="train loss",
+            yaxis_type="log",
+            height=300,
+        )
+        st.plotly_chart(fig_loss, use_container_width=True)
+
+        # Parameter trajectory
+        param_names = list(history[-1].get("params", {}).keys())
+        if param_names:
+            fig_p = go.Figure()
+            for name in param_names:
+                fig_p.add_trace(
+                    go.Scatter(
+                        x=epochs,
+                        y=[h["params"].get(name, float("nan")) for h in history],
+                        mode="lines",
+                        name=name,
+                    )
+                )
+            fig_p.update_layout(
+                xaxis_title="epoch",
+                yaxis_title="parameter value",
+                height=300,
+            )
+            st.plotly_chart(fig_p, use_container_width=True)
+
+    # Auto-refresh every 2 s while running.
+    if status == "running":
+        import time
+        time.sleep(2)
+        st.rerun()
+
+
 # ============================================================ main
 
 
@@ -371,6 +577,10 @@ def main() -> None:
         _view_compare(runs)
     elif view == "AutoML":
         _view_automl()
+    elif view == "Equations":
+        _view_equations()
+    elif view == "Train":
+        _view_train()
 
 
 if __name__ == "__main__":

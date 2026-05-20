@@ -15,6 +15,7 @@ manifests/*.json
 manifests/*.npz
 manifests/*.db
 manifests/*.db-journal
+manifests/live_*.json
 lightning_logs/
 
 # OS

@@ -48,10 +48,12 @@ def train(
         config = config.model_copy(update={"skip_preflight": True})
 
     from pinn_engine.core.trainer import train as _train
-    from pinn_engine.diagnostics import default_bundle
+    from pinn_engine.diagnostics import default_bundle, LiveStatusCallback
     from pinn_engine.repro.manifest import write_manifest
 
-    result = _train(system=system, data=data, config=config, callbacks=default_bundle())
+    callbacks = default_bundle()
+    callbacks.append(LiveStatusCallback(run_id=config.run_id, write_every=10))
+    result = _train(system=system, data=data, config=config, callbacks=callbacks)
 
     out = write_manifest(template=template, result=result, data=data)
     if manifest is not None:
