@@ -41,31 +41,30 @@ class DampedOscillator:
     @staticmethod
     def default_config() -> TrainConfig:
         # Discovered by Optuna over a 30-trial *multi-seed* search (study
-        # "showcase30ms", 2026-05-20); best trial #26 reached mean rel-err
-        # 0.109 % averaged over seeds {42, 137, 2718}. ~3× better than the
-        # prior 15-trial winner (0.32 % internal).
+        # "honest30ms", 2026-05-20) on the now-properly-wired SA-PINN/LRA
+        # balancers. Best trial #26 reached mean rel-err 0.100 % averaged
+        # over seeds {42, 137, 2718}.
         #
-        # Notable shifts from prior winners: ``lam_data_init`` climbed from
-        # 43 (single-seed AutoML) → 167 (15-trial multi-seed) → 464 here.
-        # That trajectory matches the literature's noise-calibrated
-        # recommendation 1/σ² (≈ 10 000 for our σ=0.01); more trials in the
-        # search would likely push lam_data still higher.
+        # Interesting story: the previous baked config (showcase30ms) had
+        # ``lam_data_init=464`` and ``balancer="lra"`` — but LRA was a no-op
+        # in that version of the code, so it was effectively running with
+        # static weighting that needed a very strong data prior. With LRA
+        # actually performing gradient-norm-ratio updates per epoch, the
+        # AutoML settled at ``lam_data_init=52`` (about 10× lower) and lets
+        # the dynamic balancer do the work. This matches Wang-Teng-Perdikaris
+        # 2021's central claim: adaptive weighting *replaces* manual λ tuning.
         return TrainConfig(
-            depth=5,
+            depth=6,
             width=32,
             activation="sintanh",
-            lr=1.31e-3,
+            lr=8.25e-4,
             adam_epochs=800,
             lbfgs_iters=0,  # L-BFGS incompatible with PINA InverseProblem
             balancer="lra",
             t_range=(0.0, 5.0),
             n_collocation=1500,
             batch_size=512,
-            # Data-loss-dominant: prevents the network from collapsing to
-            # x(t)≈0. AutoML settled here much more aggressively than I would
-            # have manually — moving lam_data 100× from its starting default
-            # was outside human intuition's natural search range.
-            lam_data_init=464.0,
+            lam_data_init=52.0,
             lam_physics_init=1.0,
         )
 

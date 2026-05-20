@@ -192,6 +192,19 @@ Two cases where we deviated from what literature would predict:
    that's wired, we expect `lra` (or PINA's own `SelfAdaptivePINN`
    solver) to win on harder templates.
 
+   **Resolved (2026-05-20, commits `be02a58`, `703422e`).** The SA-PINN
+   and LRA implementations were rewritten as proper
+   `pina.loss.WeightingInterface` subclasses, so PINA's solver now
+   actually invokes `weights_update(losses)` each training step. A
+   fresh 30-trial multi-seed AutoML ("honest30ms") then settled on
+   **depth=6, width=32, sintanh, lr=8.25e-4, lam_data=52, balancer=lra**
+   for 0.100 % mean rel-err — the **qualitative shift** vs. the prior
+   "lra-as-no-op" winner is that `lam_data_init` dropped ~9× (464 →
+   52). With LRA actually performing gradient-norm-ratio updates, the
+   AutoML stopped relying on aggressive static priors. This matches
+   Wang-Teng-Perdikaris 2021's central claim: adaptive weighting
+   *replaces* manual λ tuning.
+
 2. **L-BFGS finetune skipped.** Standard PINN recipe is Adam → L-BFGS;
    most papers report L-BFGS gives a 2-10× error reduction in the final
    phase. We can't run L-BFGS on PINA `InverseProblem`s because PINA
