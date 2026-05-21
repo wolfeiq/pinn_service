@@ -70,12 +70,39 @@ class WellposednessReport:
         return "\n".join(lines)
 
 
-def _sample_collocation(problem, n: int) -> torch.Tensor:
-    """Sample ``n`` collocation points uniformly from the temporal domain."""
+def _sample_collocation(problem, n: int, compiled=None) -> torch.Tensor:
+    """Sample ``n`` collocation points uniformly from the problem's input domain.
+
+    For ODE problems (single time variable) this is a linspace along ``t``.
+    For PDE problems (e.g. ``(s, t)``) this is a uniform grid over the joint
+    spatial+temporal domain, flattened to ``(N, n_inputs)``.
+
+    If ``compiled`` is provided the column order matches
+    ``compiled.input_names``; otherwise we use the problem's introspection.
+    """
     td = problem.temporal_domain
-    var = td.variables[0]
-    lo, hi = td.range_[var]
-    return torch.linspace(lo, hi, n, dtype=torch.float32).reshape(-1, 1)
+    t_var = td.variables[0]
+    t_lo, t_hi = td.range_[t_var]
+    spatial = getattr(problem, "spatial_domain", None)
+    if spatial is None:
+        return torch.linspace(t_lo, t_hi, n, dtype=torch.float32).reshape(-1, 1)
+
+    # PDE case: tensor of size (N, n_inputs) with columns in compiled.input_names order.
+    if compiled is not None:
+        input_order = list(compiled.input_names)
+    else:
+        input_order = list(spatial.variables) + [t_var]
+
+    n_side = max(2, int(round(n ** 0.5)))
+    cols = []
+    for name in input_order:
+        if name == t_var:
+            lo, hi = t_lo, t_hi
+        else:
+            lo, hi = spatial.range_[name]
+        cols.append(torch.linspace(lo, hi, n_side, dtype=torch.float32))
+    grid = torch.stack(torch.meshgrid(*cols, indexing="ij"), dim=-1).reshape(-1, len(cols))
+    return grid
 
 
 def _evaluate_residuals(
@@ -91,7 +118,7 @@ def _evaluate_residuals(
     derivatives composed during residual evaluation are valid.
     """
     t_grad = t_pts.clone().detach().requires_grad_(True)
-    input_lt = LabelTensor(t_grad, labels=[compiled.input_name])
+    input_lt = LabelTensor(t_grad, labels=list(compiled.input_names) or [compiled.input_name])
     y = network(input_lt)
     output_lt = LabelTensor(y, labels=list(compiled.state_names))
     residual_chunks = []
@@ -145,7 +172,7 @@ def check_wellposedness(
     was_training = net.training
     net.eval()
 
-    t_pts = _sample_collocation(problem, n).to(device)
+    t_pts = _sample_collocation(problem, n, compiled=compiled).to(device)
 
     # Baseline residual at θ₀.
     theta0 = {

@@ -101,6 +101,7 @@ class TrainConfig(BaseModel):
 
     # Domain
     t_range: Tuple[float, float] = (0.0, 1.0)
+    spatial_ranges: Optional[Dict[str, Tuple[float, float]]] = None
     n_collocation: int = 1000
     batch_size: int = 256
 
@@ -173,11 +174,15 @@ def train(
     pl.seed_everything(config.seed, workers=True)
 
     compiled = system.compile()
-    problem = build_problem(compiled, data, t_range=config.t_range)
+    problem = build_problem(
+        compiled, data,
+        t_range=config.t_range,
+        spatial_ranges=config.spatial_ranges,
+    )
     problem.discretise_domain(n=config.n_collocation, mode="random", domains="all")
 
     network = build_network(
-        input_dim=1,  # Phase 1+2 = time-dependent ODE problems only
+        input_dim=len(compiled.input_names),  # 1 for ODE, 2+ for PDE
         output_dim=len(compiled.state_names),
         depth=config.depth,
         width=config.width,

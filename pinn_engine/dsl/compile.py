@@ -66,6 +66,44 @@ def _autograd_deriv_full(y: torch.Tensor, x_full: torch.Tensor, order: int) -> t
     return out
 
 
+def _autograd_deriv_full_wrt(
+    y: torch.Tensor, x_full, wrt_name: str, order: int
+) -> torch.Tensor:
+    """Partial derivative ``∂^order y / ∂x_wrt^order`` for multi-input x.
+
+    Each gradient step returns a tensor matching ``x_full``'s shape (one
+    column per input variable). To take the partial w.r.t. ``wrt_name``,
+    we select that column after every step before the next backward — so
+    higher-order partials are taken consistently w.r.t. the same variable.
+    """
+    if not hasattr(x_full, "labels"):
+        # Single-input fallback (no labels): just use the full-tensor version.
+        return _autograd_deriv_full(y, x_full, order)
+
+    try:
+        idx = x_full.labels.index(wrt_name)
+    except ValueError:
+        # Variable isn't in the input — return zeros (output independent).
+        return torch.zeros_like(y)
+
+    out = y
+    for _ in range(order):
+        grad_full = torch.autograd.grad(
+            out,
+            x_full,
+            grad_outputs=torch.ones_like(out),
+            create_graph=True,
+            retain_graph=True,
+            allow_unused=True,
+        )[0]
+        if grad_full is None:
+            return torch.zeros_like(y)
+        # Slice the column matching wrt_name; keep the trailing singleton so
+        # the next iteration's autograd has a scalar-valued tensor to grad.
+        out = grad_full[..., idx : idx + 1]
+    return out
+
+
 def _column(label_tensor, name: str) -> torch.Tensor:
     """Extract a named column from a PINA LabelTensor, or a plain tensor.
 
@@ -82,12 +120,22 @@ def _column(label_tensor, name: str) -> torch.Tensor:
 def compile_equation(
     expr: sp.Expr,
     state: List[Variable],
-    input_var: Variable,
-    parameters: Dict[str, float],
+    input_vars=None,
+    parameters: Dict[str, float] = None,
+    input_var: Variable = None,  # back-compat alias for single-input case
 ) -> Callable[..., torch.Tensor]:
-    """Return a PINA-compatible residual function for ``expr == 0``."""
+    """Return a PINA-compatible residual function for ``expr == 0``.
 
+    ``input_vars`` is the tuple of independent variables (e.g. ``(s, t)`` for
+    PDEs or ``(t,)`` for ODEs). The legacy ``input_var`` kwarg is accepted
+    for back-compat with the single-input case.
+    """
+    if input_vars is None:
+        if input_var is None:
+            raise ValueError("compile_equation needs `input_vars` or `input_var`")
+        input_vars = (input_var,)
     state_names = [s.name for s in state]
+    parameters = parameters or {}
 
     def residual(input_lt, output_lt, params_=None):  # PINA signature
         params_ = params_ or {}
@@ -96,7 +144,7 @@ def compile_equation(
             output_lt=output_lt,
             params_=params_,
             state=state,
-            input_var=input_var,
+            input_vars=input_vars,
             parameters=parameters,
         )
         return _eval(expr, ctx)
@@ -134,7 +182,12 @@ def compile_sensor_observation(
 
 
 class _EvalContext:
-    """Bag of state for the sympy → torch walker."""
+    """Bag of state for the sympy → torch walker.
+
+    Supports both ODE (single input variable) and PDE (multi-input) cases.
+    For PDE, partial derivatives w.r.t. any declared input variable resolve
+    correctly via the autograd graph + label-based column slicing.
+    """
 
     def __init__(
         self,
@@ -142,7 +195,7 @@ class _EvalContext:
         output_lt,
         params_: Dict[str, torch.Tensor],
         state: List[Variable],
-        input_var: Variable,
+        input_vars,                       # tuple of Variable
         parameters: Dict[str, float],
     ):
         self.input_lt = input_lt
@@ -150,11 +203,15 @@ class _EvalContext:
         self.params_ = params_
         self.state = state
         self.state_names = {s.name for s in state}
-        self.input_var = input_var
+        self.input_vars = tuple(input_vars)
+        self.input_var_names = [v.name for v in self.input_vars]
+        # Back-compat: pick the "primary" input (last in tuple) for code that
+        # only handled the single-input case.
+        self.input_var = self.input_vars[-1]
         self.parameters = parameters
         # cache state-variable values so we don't extract repeatedly
         self._state_cache: Dict[str, torch.Tensor] = {}
-        self._deriv_cache: Dict[Tuple[str, int], torch.Tensor] = {}
+        self._deriv_cache: Dict[Tuple[str, str, int], torch.Tensor] = {}
 
     def state_value(self, name: str) -> torch.Tensor:
         if name not in self._state_cache:
@@ -164,23 +221,19 @@ class _EvalContext:
     def input_value(self) -> torch.Tensor:
         return _column(self.input_lt, self.input_var.name)
 
-    def derivative(self, name: str, order: int) -> torch.Tensor:
-        key = (name, order)
+    def derivative(self, name: str, wrt: sp.Symbol, order: int) -> torch.Tensor:
+        """Partial derivative ``∂^order state[name] / ∂wrt^order``.
+
+        Differentiates w.r.t. the full input tensor (so the autograd graph is
+        rooted correctly) and then slices the column corresponding to ``wrt``.
+        """
+        wrt_name = wrt.name if hasattr(wrt, "name") else str(wrt)
+        key = (name, wrt_name, order)
         if key not in self._deriv_cache:
             y = self.state_value(name)
-            # Differentiate w.r.t. the ORIGINAL input tensor (the one the
-            # network actually consumed). The autograd graph is rooted there.
             x_full = self.input_lt
-            grad_t = _autograd_deriv_full(y, x_full, order)
-            # For time-only ODE problems (Phase 1+2) the input is 1-D; the
-            # gradient has shape (N, 1) and we return it as-is. For multi-input
-            # problems we'd slice the column corresponding to ``self.input_var``.
-            if grad_t.shape[-1] > 1:
-                # Future-proofing: select the column matching the input var.
-                if hasattr(x_full, "labels"):
-                    idx = x_full.labels.index(self.input_var.name)
-                    grad_t = grad_t[..., idx : idx + 1]
-            self._deriv_cache[key] = grad_t
+            grad_full = _autograd_deriv_full_wrt(y, x_full, wrt_name, order)
+            self._deriv_cache[key] = grad_full
         return self._deriv_cache[key]
 
 
@@ -191,9 +244,9 @@ def _eval(expr: sp.Expr, ctx: _EvalContext) -> torch.Tensor:
     if expr.is_Number:
         return torch.tensor(float(expr), dtype=torch.float32)
 
-    # The independent variable itself
-    if isinstance(expr, Variable) and expr == ctx.input_var:
-        return ctx.input_value()
+    # Any declared independent variable
+    if isinstance(expr, Variable) and expr.name in ctx.input_var_names:
+        return _column(ctx.input_lt, expr.name)
 
     # State variable
     if isinstance(expr, Variable):
@@ -221,15 +274,27 @@ def _eval(expr: sp.Expr, ctx: _EvalContext) -> torch.Tensor:
             raise UnsupportedExpression(
                 f"Derivative of non-Variable {base!r} not supported."
             )
-        # sympy stores variables differentiated as ((var, order), ...)
-        order = 0
+        # Multi-variable derivatives: take partials in declared order.
+        # sympy stores variables differentiated as ((var, order), ...).
+        # We handle one variable at a time, applying each partial in
+        # sequence (∂²y/∂s∂t = ∂/∂t (∂y/∂s)).
+        cur = ctx.state_value(base.name)
+        x_full = ctx.input_lt
         for v, n in expr.variable_count:
-            if v != ctx.input_var:
+            if v.name not in ctx.input_var_names:
                 raise UnsupportedExpression(
-                    f"Derivative w.r.t. {v!r} not supported (only {ctx.input_var.name!r})."
+                    f"Derivative w.r.t. {v!r} — not a declared input variable "
+                    f"({ctx.input_var_names!r})."
                 )
-            order += int(n)
-        return ctx.derivative(base.name, order)
+            # Use the cache for single-variable repeated partials (the common case).
+            key = (base.name, v.name, int(n))
+            if key in ctx._deriv_cache and cur is ctx.state_value(base.name):
+                cur = ctx._deriv_cache[key]
+            else:
+                cur = _autograd_deriv_full_wrt(cur, x_full, v.name, int(n))
+                if cur is ctx.state_value(base.name) is False:
+                    ctx._deriv_cache[key] = cur
+        return cur
 
     # Add
     if isinstance(expr, sp.Add):

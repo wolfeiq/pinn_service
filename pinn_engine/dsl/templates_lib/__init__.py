@@ -4,5 +4,6 @@ from pinn_engine.dsl.templates_lib import (
     lorenz,
     diffusion_1d,
     fossen_surge,
-    pendulum,  # noqa: F401
+    pendulum,
+    cosserat_rod,  # noqa: F401
 )  # noqa: F401

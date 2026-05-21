@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from pina import Condition, LabelTensor
-from pina.problem import TimeDependentProblem, InverseProblem
+from pina.problem import TimeDependentProblem, SpatialProblem, InverseProblem
 from pina.domain import CartesianDomain
 from pina.equation import Equation
 
@@ -34,21 +34,47 @@ def build_problem(
     compiled: CompiledSystem,
     data: Dict[str, Tuple[Any, Any]],
     t_range: Tuple[float, float],
+    spatial_ranges: Dict[str, Tuple[float, float]] = None,
 ) -> InverseProblem:
     """Construct a PINA problem instance from a compiled DSL system + data.
 
     Parameters:
         compiled: the result of ``System.compile()``.
         data: mapping ``sensor_name -> (input_array, observation_array)``.
+            For PDE problems the input array should have shape ``(N, n_inputs)``
+            with columns in the order ``compiled.input_names``.
         t_range: ``(t_min, t_max)`` for the temporal collocation domain.
+        spatial_ranges: only required for PDE problems —
+            ``{spatial_name: (lo, hi)}`` for each spatial input variable.
 
     Returns:
-        an instantiated PINA problem.
+        an instantiated PINA problem. For PDEs the class inherits both
+        ``SpatialProblem`` and ``TimeDependentProblem``.
     """
     state_names = list(compiled.state_names)
     input_name = compiled.input_name
+    is_pde = compiled.is_pde
+    spatial_names = [n for n in compiled.input_names if n != input_name]
 
     temporal_domain = CartesianDomain({input_name: [float(t_range[0]), float(t_range[1])]})
+    if is_pde:
+        if not spatial_ranges:
+            raise ValueError(
+                f"PDE problem with spatial variables {spatial_names!r} requires "
+                f"`spatial_ranges` (got None)"
+            )
+        spatial_domain = CartesianDomain(
+            {n: [float(spatial_ranges[n][0]), float(spatial_ranges[n][1])]
+             for n in spatial_names}
+        )
+        # Joint physics-collocation domain spanning all inputs.
+        physics_domain = CartesianDomain(
+            {**spatial_domain.range_, **temporal_domain.range_}
+        )
+    else:
+        spatial_domain = None
+        physics_domain = temporal_domain
+
     unknown_parameter_domain = CartesianDomain(
         {
             name: [float(lo), float(hi)]
@@ -61,7 +87,7 @@ def build_problem(
     # One physics condition per residual.
     for i, residual_fn in enumerate(compiled.physics_residuals):
         conditions[f"physics_{i}"] = Condition(
-            domain=temporal_domain,
+            domain=physics_domain,
             equation=Equation(residual_fn),
         )
 
@@ -70,9 +96,12 @@ def build_problem(
         if sens.name not in data:
             continue
         t_arr, obs_arr = data[sens.name]
-        input_lt = _as_label_tensor(t_arr, labels=[input_name])
-        # The observed quantity gets the state-variable's name as label so PINA
-        # can match it against the network's named output.
+        if is_pde:
+            # Sensor input is (N, n_inputs) with columns ordered as
+            # compiled.input_names.
+            input_lt = _as_label_tensor(t_arr, labels=list(compiled.input_names))
+        else:
+            input_lt = _as_label_tensor(t_arr, labels=[input_name])
         observed_label = sens.observes.name if hasattr(sens.observes, "name") else sens.name
         target_lt = _as_label_tensor(obs_arr, labels=[observed_label])
         conditions[f"data_{sens.name}"] = Condition(input=input_lt, target=target_lt)
@@ -83,7 +112,12 @@ def build_problem(
         "unknown_parameter_domain": unknown_parameter_domain,
         "conditions": conditions,
     }
-    cls = type("CompiledInverseProblem", (TimeDependentProblem, InverseProblem), attrs)
+    if is_pde:
+        attrs["spatial_domain"] = spatial_domain
+        base_classes = (SpatialProblem, TimeDependentProblem, InverseProblem)
+    else:
+        base_classes = (TimeDependentProblem, InverseProblem)
+    cls = type("CompiledInverseProblem", base_classes, attrs)
     problem = cls()
 
     # PINA initializes unknown_parameters with U(0, range_hi) + range_lo, which

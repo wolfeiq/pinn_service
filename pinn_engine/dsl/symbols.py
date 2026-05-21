@@ -32,46 +32,81 @@ class _SymbolBase(sp.Symbol):
 class Variable(_SymbolBase):
     """A state variable. If ``depends_on`` is set, derivatives are taken w.r.t. it.
 
+    ``depends_on`` can be a single :class:`Variable` (ODE case — ``u`` depends
+    on ``t``) or a tuple (PDE case — ``u`` depends on ``(s, t)``).
+
     Example::
 
+        # ODE
         t = Variable("t")
         x = Variable("x", depends_on=t)
-        x.d        # → Derivative(x(t), t)
-        x.dd       # → Derivative(x(t), t, 2)
+        x.d        # → ∂x/∂t   (first depends_on)
+        x.dd       # → ∂²x/∂t²
+
+        # PDE
+        s = Variable("s"); t = Variable("t")
+        u = Variable("u", depends_on=(s, t))
+        u.diff(t)         # → ∂u/∂t
+        u.diff(s, 2)      # → ∂²u/∂s²
+        u.d               # → ∂u/∂s  (first in the tuple)
     """
 
-    def __new__(cls, name: str, depends_on: Optional[sp.Symbol] = None):
+    def __new__(cls, name: str, depends_on=None):
         obj = sp.Symbol.__new__(cls, name)
-        obj._depends_on = depends_on
+        # Normalize to tuple; None → empty.
+        if depends_on is None:
+            obj._depends_on = ()
+        elif isinstance(depends_on, (list, tuple)):
+            obj._depends_on = tuple(depends_on)
+        else:
+            obj._depends_on = (depends_on,)
         return obj
 
     @property
-    def depends_on(self) -> Optional[sp.Symbol]:
-        return getattr(self, "_depends_on", None)
+    def depends_on(self):
+        """First dependency (back-compat). Use ``depends_on_all`` for the tuple."""
+        deps = getattr(self, "_depends_on", ())
+        return deps[0] if deps else None
 
     @property
-    def d(self) -> sp.Expr:
-        """First derivative w.r.t. ``depends_on``."""
-        if self.depends_on is None:
+    def depends_on_all(self) -> tuple:
+        """All dependencies as a tuple. Empty if the variable is independent."""
+        return getattr(self, "_depends_on", ())
+
+    def _check_deps(self):
+        if not self.depends_on_all:
             raise AttributeError(
                 f"Variable {self.name!r} has no `depends_on`; can't take derivative."
             )
+
+    @property
+    def d(self) -> sp.Expr:
+        """First derivative w.r.t. the *first* declared dependency."""
+        self._check_deps()
         return sp.Derivative(self, self.depends_on)
 
     @property
     def dd(self) -> sp.Expr:
-        """Second derivative w.r.t. ``depends_on``."""
-        if self.depends_on is None:
-            raise AttributeError(
-                f"Variable {self.name!r} has no `depends_on`; can't take derivative."
-            )
+        """Second derivative w.r.t. the *first* declared dependency."""
+        self._check_deps()
         return sp.Derivative(self, self.depends_on, 2)
 
-    def deriv(self, order: int) -> sp.Expr:
-        if self.depends_on is None:
+    def diff(self, var: sp.Symbol, order: int = 1) -> sp.Expr:
+        """Partial derivative w.r.t. ``var`` of the given ``order``.
+
+        ``var`` must be one of this variable's declared ``depends_on``.
+        """
+        self._check_deps()
+        if var not in self.depends_on_all:
             raise AttributeError(
-                f"Variable {self.name!r} has no `depends_on`; can't take derivative."
+                f"Variable {self.name!r} doesn't depend on {var!r}; "
+                f"declared dependencies are {self.depends_on_all!r}"
             )
+        return sp.Derivative(self, var, order)
+
+    def deriv(self, order: int) -> sp.Expr:
+        """Repeated derivative w.r.t. the first dependency (ODE case)."""
+        self._check_deps()
         return sp.Derivative(self, self.depends_on, order)
 
 

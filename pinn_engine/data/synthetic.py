@@ -79,6 +79,86 @@ def generate_lorenz(
     }, {"sigma": sigma, "rho": rho, "beta": beta}
 
 
+# -------------------------------------------------------------- cosserat rod (1D wave eq)
+
+
+def generate_cosserat_rod(
+    E: float = 1.0e6,
+    rho: float = 1000.0,
+    L: float = 1.0,
+    t_end: float = 0.01,
+    n_s: int = 41,
+    n_t: int = 201,
+    n_sensors: int = 10,
+    noise_std: float = 1e-4,
+    seed: int = 0,
+):
+    """Simulate 1-D longitudinal vibration of a Cosserat rod.
+
+    PDE: ``ρ · u_tt = E · u_ss`` on ``s ∈ [0, L]``, ``t ∈ [0, T]``.
+    BCs: ``u(0, t) = 0`` (fixed end), ``u_s(L, t) = 0`` (free end).
+    IC: ``u(s, 0) = u₀(s)`` (initial Gaussian deflection), ``u_t(s, 0) = 0``.
+
+    Solved with an explicit finite-difference scheme (central in space,
+    leapfrog in time) — accurate enough for synthetic ground truth.
+
+    The output sensor data places ``n_sensors`` virtual gauges uniformly
+    along the rod, each reporting ``u(s_i, t_k)`` for every time step.
+    Sensor data is flattened: ``(t, s)`` pairs in column-major order.
+    Returns ``(data, truth)`` with ``data['u_meas'] = ((N, 2), (N,))``.
+    """
+    rng = np.random.default_rng(seed)
+
+    c_wave = (E / rho) ** 0.5
+    ds = L / (n_s - 1)
+    dt_max = ds / c_wave * 0.9   # CFL safety factor
+    n_t_safe = max(n_t, int(np.ceil(t_end / dt_max)) + 1)
+    dt = t_end / (n_t_safe - 1)
+    t_grid = np.linspace(0.0, t_end, n_t_safe)
+    s_grid = np.linspace(0.0, L, n_s)
+
+    # Initial Gaussian centred at L/2.
+    s_mid = 0.5 * L
+    width = 0.1 * L
+    u0 = 1e-3 * np.exp(-((s_grid - s_mid) ** 2) / (2 * width ** 2))
+    # Zero at boundaries (BCs).
+    u0[0] = 0.0
+
+    u_now = u0.copy()
+    u_prev = u0.copy()   # zero initial velocity → u_prev = u0
+    u_grid = np.zeros((n_t_safe, n_s), dtype=np.float64)
+    u_grid[0] = u_now
+
+    coeff = (c_wave * dt / ds) ** 2
+    for k in range(1, n_t_safe):
+        u_new = np.zeros_like(u_now)
+        u_new[1:-1] = (
+            2 * u_now[1:-1] - u_prev[1:-1]
+            + coeff * (u_now[2:] - 2 * u_now[1:-1] + u_now[:-2])
+        )
+        # BCs
+        u_new[0] = 0.0
+        u_new[-1] = u_new[-2]  # u_s(L, t) = 0 (Neumann via ghost-point mirror)
+        u_prev = u_now
+        u_now = u_new
+        u_grid[k] = u_now
+
+    # Down-sample sensors uniformly.
+    sensor_idx = np.linspace(1, n_s - 1, n_sensors, dtype=int)
+    sensor_s = s_grid[sensor_idx]
+    T, S = np.meshgrid(t_grid, sensor_s, indexing="ij")
+    u_obs = u_grid[:, sensor_idx]
+    u_obs_noisy = u_obs + rng.normal(0.0, noise_std, size=u_obs.shape)
+
+    # Flatten to (N, 2) input + (N,) target.
+    input_arr = np.stack([S.flatten(), T.flatten()], axis=1).astype(np.float32)
+    target_arr = u_obs_noisy.flatten().astype(np.float32)
+    return (
+        {"u_meas": (input_arr, target_arr)},
+        {"E": E},
+    )
+
+
 # -------------------------------------------------------------- pendulum with friction
 
 
