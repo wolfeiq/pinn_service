@@ -41,9 +41,28 @@ class ResidualHeatmap(DiagnosticCallback):
         var = td.variables[0]
         lo, hi = td.range_[var]
         device = next(net.parameters()).device
-        t = torch.linspace(lo, hi, self.n_points, dtype=torch.float32, device=device).reshape(-1, 1)
+
+        # For PDE problems, build a 2-D collocation grid; for ODE, a 1-D linspace.
+        input_names = list(getattr(compiled, "input_names", ()) or [var])
+        if len(input_names) == 1:
+            t = torch.linspace(lo, hi, self.n_points, dtype=torch.float32, device=device).reshape(-1, 1)
+            grid_labels = [var]
+        else:
+            # Joint grid sized so total points ≈ n_points.
+            spatial = getattr(problem, "spatial_domain", None)
+            n_side = max(2, int(round(self.n_points ** (1.0 / len(input_names)))))
+            cols = []
+            for n_in in input_names:
+                if n_in == var:
+                    cols.append(torch.linspace(lo, hi, n_side, dtype=torch.float32, device=device))
+                else:
+                    s_lo, s_hi = spatial.range_[n_in]
+                    cols.append(torch.linspace(s_lo, s_hi, n_side, dtype=torch.float32, device=device))
+            t = torch.stack(torch.meshgrid(*cols, indexing="ij"), dim=-1).reshape(-1, len(cols))
+            grid_labels = input_names
+
         with torch.enable_grad():
-            input_lt = LabelTensor(t.clone().requires_grad_(True), labels=[var])
+            input_lt = LabelTensor(t.clone().requires_grad_(True), labels=grid_labels)
             y = net(input_lt)
             output_lt = LabelTensor(y, labels=list(compiled.state_names))
             params_ = problem.unknown_parameters
@@ -53,7 +72,11 @@ class ResidualHeatmap(DiagnosticCallback):
                 residuals_sq.append((r.detach().cpu().numpy() ** 2).reshape(-1))
         snap = {
             "epoch": int(trainer.current_epoch),
-            "t": t.detach().cpu().numpy().reshape(-1).tolist(),
+            "t": (
+                t.detach().cpu().numpy()[:, -1].reshape(-1).tolist()
+                if t.dim() == 2 and t.shape[1] > 1
+                else t.detach().cpu().numpy().reshape(-1).tolist()
+            ),
             "residual_l2": [np.sqrt(r).tolist() for r in residuals_sq],
         }
         self._snapshots.append(snap)

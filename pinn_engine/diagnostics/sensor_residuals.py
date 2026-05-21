@@ -34,7 +34,12 @@ class SensorResiduals(DiagnosticCallback):
                 continue
             t_arr, obs_arr = data_dict[sens.name]
             device = next(net.parameters()).device
-            t = torch.as_tensor(t_arr, dtype=torch.float32, device=device).reshape(-1, 1)
+            t_np = np.asarray(t_arr)
+            if t_np.ndim == 2 and t_np.shape[1] > 1:
+                # PDE input (N, n_inputs) — pass through verbatim.
+                t = torch.as_tensor(t_np, dtype=torch.float32, device=device)
+            else:
+                t = torch.as_tensor(t_np, dtype=torch.float32, device=device).reshape(-1, 1)
             with torch.no_grad():
                 y = net(t)
                 output_lt = LabelTensor(y, labels=list(compiled.state_names))

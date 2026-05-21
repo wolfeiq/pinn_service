@@ -33,7 +33,25 @@ class SpectralBias(DiagnosticCallback):
         td = problem.temporal_domain
         var = td.variables[0]
         lo, hi = td.range_[var]
-        self._t = torch.linspace(lo, hi, self.n_points, dtype=torch.float32).reshape(-1, 1)
+        # Build an input tensor matching the network's expected input shape.
+        # For ODE problems that's (N, 1); for PDE problems we sweep along the
+        # temporal axis and fix spatial coords at their midpoint (so the FFT
+        # reflects time-domain content).
+        compiled = getattr(pl_module, "_compiled_system", None)
+        input_names = list(getattr(compiled, "input_names", ()) or [var])
+        if len(input_names) == 1:
+            self._t = torch.linspace(lo, hi, self.n_points, dtype=torch.float32).reshape(-1, 1)
+        else:
+            spatial = getattr(problem, "spatial_domain", None)
+            t_col = torch.linspace(lo, hi, self.n_points, dtype=torch.float32)
+            cols = []
+            for n_in in input_names:
+                if n_in == var:
+                    cols.append(t_col)
+                else:
+                    s_lo, s_hi = spatial.range_[n_in]
+                    cols.append(torch.full_like(t_col, 0.5 * (s_lo + s_hi)))
+            self._t = torch.stack(cols, dim=1)
 
     def on_train_epoch_end(self, trainer, pl_module):
         if (trainer.current_epoch % self.every_n_epochs) != 0 or self._t is None:
