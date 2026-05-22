@@ -87,11 +87,16 @@ class CosseratRod:
 
     @staticmethod
     def automl_space(trial):
+        # Fourier features are critical here. Without them the network's
+        # u(s, t) prediction is too smooth → u_ss ≈ 0 → ∂L/∂E ≈ 0 → E
+        # never updates from its midpoint init. With Fourier features the
+        # network can represent high-frequency content and u_ss carries
+        # the gradient signal that lets the optimizer move E.
         return TrainConfig(
             depth=trial.suggest_int("depth", 4, 8),
             width=trial.suggest_categorical("width", [32, 64, 128]),
             activation=trial.suggest_categorical(
-                "activation", ["tanh", "sintanh", "swish"]
+                "activation", ["tanh", "sintanh", "swish", "sin"]
             ),
             lr=trial.suggest_float("lr", 5e-4, 5e-3, log=True),
             lam_data_init=trial.suggest_float("lam_data_init", 100.0, 10000.0, log=True),
@@ -103,6 +108,9 @@ class CosseratRod:
             spatial_ranges={"s": (0.0, L)},
             n_collocation=3000,
             batch_size=1024,
+            # Mandatory Fourier embedding — the spectral-bias fix.
+            fourier_features=trial.suggest_categorical("fourier_features", [16, 32, 64, 128]),
+            fourier_sigma=trial.suggest_float("fourier_sigma", 1.0, 20.0, log=True),
         )
 
     @staticmethod
