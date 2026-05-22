@@ -52,16 +52,23 @@ def build_system() -> System:
     # Divide the equation by E_ref so the residual is O(1) when u and E_unit
     # are both O(1). Original PDE: ρ·u_tt = E_ref·E_unit·u_ss
     # Divided by E_ref: (ρ/E_ref)·u_tt = E_unit·u_ss
-    # At truth (E_unit=1, u_amp=1, ρ/E_ref=1e-3, u_tt≈1e5, u_ss≈100):
-    #   1e-3 · 1e5 − 1.0 · 100 = 0  ✓
     rho_eref = Parameter("rho_over_E_ref", value=RHO / E_REF)
-    # Dimensionless multiplier in (0.1, 10). Midpoint 5.05 vs truth 1.0;
-    # AutoML must move it ~5× to converge.
+    # Dimensionless multiplier in (0.1, 10). Midpoint 5.05 vs truth 1.0.
     E_unit = Unknown("E_unit", bounds=(0.1, 10.0))
     return System(
         state=[u],
         equations=[rho_eref * u.diff(t, 2) - E_unit * u.diff(s, 2)],
-        sensors=[Sensor("u_meas", observes=u, noise_std=1e-2)],
+        sensors=[
+            # Interior strain-gauge measurements (noisy).
+            Sensor("u_meas", observes=u, noise_std=1e-2),
+            # Dirichlet boundary condition u(0, t) = 0. Pseudo-sensor —
+            # noise-free synthetic data at the fixed end. The synthetic-data
+            # generator emits exact zeros at s=0 for every t in the grid.
+            Sensor("u_bc", observes=u, noise_std=0.0),
+            # Initial condition u(s, 0) = u₀(s). Pseudo-sensor — synthetic data
+            # generator emits the analytical IC values at t=0 for every s.
+            Sensor("u_ic", observes=u, noise_std=0.0),
+        ],
     )
 
 

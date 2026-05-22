@@ -146,18 +146,33 @@ def generate_cosserat_rod(
         u_now = u_new
         u_grid[k] = u_now
 
-    # Down-sample sensors uniformly.
+    # Down-sample interior sensors uniformly.
     sensor_idx = np.linspace(1, n_s - 1, n_sensors, dtype=int)
     sensor_s = s_grid[sensor_idx]
     T, S = np.meshgrid(t_grid, sensor_s, indexing="ij")
     u_obs = u_grid[:, sensor_idx]
     u_obs_noisy = u_obs + rng.normal(0.0, noise_std, size=u_obs.shape)
+    meas_input = np.stack([S.flatten(), T.flatten()], axis=1).astype(np.float32)
+    meas_target = u_obs_noisy.flatten().astype(np.float32)
 
-    # Flatten to (N, 2) input + (N,) target.
-    input_arr = np.stack([S.flatten(), T.flatten()], axis=1).astype(np.float32)
-    target_arr = u_obs_noisy.flatten().astype(np.float32)
+    # Boundary condition: u(0, t) = 0 for every t in the grid (noise-free).
+    bc_input = np.stack(
+        [np.zeros_like(t_grid), t_grid], axis=1
+    ).astype(np.float32)
+    bc_target = np.zeros(t_grid.shape, dtype=np.float32)
+
+    # Initial condition: u(s, 0) = u0(s) for every s in the grid.
+    ic_input = np.stack(
+        [s_grid, np.zeros_like(s_grid)], axis=1
+    ).astype(np.float32)
+    ic_target = u0.astype(np.float32)
+
     return (
-        {"u_meas": (input_arr, target_arr)},
+        {
+            "u_meas": (meas_input, meas_target),   # interior sensors w/ noise
+            "u_bc":   (bc_input, bc_target),       # Dirichlet at s=0
+            "u_ic":   (ic_input, ic_target),       # initial condition at t=0
+        },
         {"E": E},
     )
 
