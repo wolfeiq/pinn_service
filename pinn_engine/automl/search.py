@@ -46,9 +46,19 @@ def _objective(trial, template_name: str, data, monitor: str = "train_loss_epoch
     Pruning still works: we report the running average to Optuna after each
     seed (step=0, 1, 2), so a trial with a hopeless first seed gets pruned
     before wasting compute on the other two.
+
+    If the template doesn't define ``automl_space``, we fall back to
+    :func:`pinn_engine.automl.auto_search_space` — derived automatically
+    from the compiled system structure.
     """
     template = get_template(template_name)
-    config = template.automl_space(trial)
+    if hasattr(template, "automl_space"):
+        config = template.automl_space(trial)
+    else:
+        from pinn_engine.automl.auto_space import auto_search_space
+        compiled = template.system().compile()
+        space_fn = auto_search_space(compiled)
+        config = space_fn(trial)
     system = template.system()
     bounds = template.unknown_bounds
 

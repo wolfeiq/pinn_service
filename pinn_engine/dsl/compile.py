@@ -36,6 +36,9 @@ _TORCH_FUNCS = {
     sp.exp: torch.exp,
     sp.tanh: torch.tanh,
     sp.sqrt: torch.sqrt,
+    sp.Abs: torch.abs,
+    sp.sign: torch.sign,
+    sp.log: torch.log,
 }
 
 
@@ -314,11 +317,64 @@ def _eval(expr: sp.Expr, ctx: _EvalContext) -> torch.Tensor:
             raise UnsupportedExpression(f"Non-numeric exponent in {expr!r}.")
         return _eval(base, ctx) ** float(exp)
 
-    # Elementary functions
+    # Elementary functions (single-arg)
     if expr.func in _TORCH_FUNCS:
         (arg,) = expr.args
         return _TORCH_FUNCS[expr.func](_eval(arg, ctx))
 
+    # Piecewise — torch.where chain. Each arg is (value, condition).
+    # The final ``else`` branch in sympy uses condition `True`.
+    if isinstance(expr, sp.Piecewise):
+        # Build from the back: result = else_value; then chain torch.where for each branch.
+        if not expr.args:
+            raise UnsupportedExpression("Empty Piecewise expression.")
+        # Find the default (condition True) branch; sympy guarantees it's last
+        # if user followed convention, else we synthesise a zero default.
+        branches = list(expr.args)
+        default_value = torch.zeros_like(_eval(branches[-1][0], ctx))
+        if branches[-1][1] == sp.true:
+            default_value = _eval(branches[-1][0], ctx)
+            branches = branches[:-1]
+        result = default_value
+        for value_expr, cond_expr in reversed(branches):
+            value = _eval(value_expr, ctx)
+            cond = _eval_bool(cond_expr, ctx)
+            result = torch.where(cond, value, result)
+        return result
+
+    # Comparison operators used in Piecewise conditions
+    if isinstance(expr, (sp.StrictGreaterThan, sp.GreaterThan,
+                          sp.StrictLessThan, sp.LessThan, sp.Equality)):
+        # Evaluated only via _eval_bool path; if we get here it's a bare comparison.
+        return _eval_bool(expr, ctx).to(torch.float32)
+
     raise UnsupportedExpression(
         f"Unsupported sympy node {type(expr).__name__}: {expr!r}"
+    )
+
+
+def _eval_bool(expr, ctx) -> torch.Tensor:
+    """Evaluate a sympy boolean / comparison expression as a torch bool tensor."""
+    if expr is sp.true or expr is True:
+        # Broadcast-compatible all-True; let downstream torch.where handle shape.
+        return torch.tensor(True)
+    if expr is sp.false or expr is False:
+        return torch.tensor(False)
+    if isinstance(expr, sp.StrictGreaterThan):
+        a, b = expr.args
+        return _eval(a, ctx) > _eval(b, ctx)
+    if isinstance(expr, sp.GreaterThan):
+        a, b = expr.args
+        return _eval(a, ctx) >= _eval(b, ctx)
+    if isinstance(expr, sp.StrictLessThan):
+        a, b = expr.args
+        return _eval(a, ctx) < _eval(b, ctx)
+    if isinstance(expr, sp.LessThan):
+        a, b = expr.args
+        return _eval(a, ctx) <= _eval(b, ctx)
+    if isinstance(expr, sp.Equality):
+        a, b = expr.args
+        return _eval(a, ctx) == _eval(b, ctx)
+    raise UnsupportedExpression(
+        f"Unsupported boolean expression {type(expr).__name__}: {expr!r}"
     )

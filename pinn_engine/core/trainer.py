@@ -88,6 +88,9 @@ class TrainConfig(BaseModel):
     width: int = Field(default=64, ge=8, le=512)
     activation: str = Field(default="tanh")
     layer_norm: bool = True
+    # Optional Fourier feature input encoding (0 = off; n > 0 adds 2n cols).
+    fourier_features: int = Field(default=0, ge=0, le=256)
+    fourier_sigma: float = Field(default=1.0, gt=0)
 
     # Optimization
     lr: float = Field(default=1e-3, gt=0)
@@ -188,6 +191,8 @@ def train(
         width=config.width,
         activation=config.activation,
         layer_norm=config.layer_norm,
+        fourier_features=config.fourier_features,
+        fourier_sigma=config.fourier_sigma,
     )
 
     if not config.skip_preflight:
