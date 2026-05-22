@@ -37,7 +37,15 @@ class LabeledDataPINN(PinaPINN):
     sensors (each target is a single column), this broadcasts wrong:
     ``(N, 3)`` vs ``(N, 1)``. Here we extract only the columns of the network
     output whose labels appear in the target's labels before computing MSE.
+
+    Also exposes ``param_lr_scale`` so unknown parameters can be optimised
+    at a different learning rate than network weights.
     """
+
+    # Multiplier on the base LR applied only to the unknown_parameters group.
+    # The trainer sets this via attribute assignment after solver construction
+    # since PINA's __init__ doesn't pass through extra kwargs.
+    _engine_param_lr_scale: float = 1.0
 
     def loss_data(self, input, target):
         out = self.forward(input)
@@ -46,6 +54,32 @@ class LabeledDataPINN(PinaPINN):
             if cols and len(cols) != len(out.labels):
                 out = out.extract(cols)
         return self._loss_fn(out, target)
+
+    def configure_optimizers(self):
+        """Override PINA's default to apply ``_engine_param_lr_scale``
+        on the unknown_parameters' optimizer group."""
+        from pina.problem import InverseProblem
+
+        self.optimizer.hook(self.model.parameters())
+        scale = float(getattr(self, "_engine_param_lr_scale", 1.0))
+        if isinstance(self.problem, InverseProblem) and scale != 1.0:
+            # Read the network's lr (the one PINA just hooked).
+            try:
+                base_lr = self.optimizer.instance.param_groups[0]["lr"]
+            except Exception:
+                base_lr = 1e-3
+            scaled_lr = base_lr * scale
+            self.optimizer.instance.add_param_group({
+                "params": [self._params[v] for v in self.problem.unknown_variables],
+                "lr": scaled_lr,
+            })
+        elif isinstance(self.problem, InverseProblem):
+            # No scaling — fall back to PINA's default behaviour.
+            self.optimizer.instance.add_param_group({
+                "params": [self._params[v] for v in self.problem.unknown_variables]
+            })
+        self.scheduler.hook(self.optimizer)
+        return ([self.optimizer.instance], [self.scheduler.instance])
 
 
 class LBFGSInversePINN(LabeledDataPINN):
@@ -94,6 +128,12 @@ class TrainConfig(BaseModel):
 
     # Optimization
     lr: float = Field(default=1e-3, gt=0)
+    # Separate LR multiplier for unknown parameters. Network weights see
+    # `lr`; unknowns see `lr * param_lr_scale`. Larger values let inverse
+    # parameters traverse their search ranges faster — critical for PDE
+    # inverse problems where Adam's per-parameter normalization otherwise
+    # makes unknowns crawl. Default 1.0 = legacy single-LR behaviour.
+    param_lr_scale: float = Field(default=1.0, gt=0)
     adam_epochs: int = Field(default=2000, ge=0)
     lbfgs_iters: int = Field(default=0, ge=0)
 
@@ -225,6 +265,8 @@ def train(
     # Stash the weighting on the solver so diagnostic callbacks can inspect
     # its history without re-grepping logs.
     solver._engine_weighting = weighting
+    # Apply the separate-LR-for-unknowns config option.
+    solver._engine_param_lr_scale = float(config.param_lr_scale)
 
     trainer_adam = PinaTrainer(
         solver=solver,
