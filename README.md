@@ -62,6 +62,21 @@ print(result.final_params)   # {"c": 0.503, "k": 10.04}
 
 This is the single biggest knob in practice. Our `damped_oscillator` template uses `c∈(0,1.5), k∈(0,20)` for a truth of `(0.5, 10)` — discovered to 0.1% error in 800 epochs on CPU.
 
+## Maturity status
+
+| Template | Status | Mean rel-err | Per-run wall-clock |
+|---|---|---:|---:|
+| `damped_oscillator` | **production** | 0.10 % | ~60 s CPU |
+| `lorenz` | **production** | <0.02 % | ~13 min CPU |
+| `pendulum` | production | n/a (untuned) | ~60 s CPU |
+| `fossen_surge` | production | 9.8 % (partial identifiability — physics limit, not engine) | ~30 s CPU |
+| `cosserat_rod` (PDE) | **beta** | converges to <10 % at 10k+ epochs (~30 min CPU); see `docs/literature_comparison.md` | ~30 min CPU |
+
+PDE templates use the same engine, DSL, AutoML, dashboard — they just need
+~10× more training budget than ODE templates to reach published-paper
+accuracy. This is the standard story for PINN-on-PDE inverse problems
+(see DD-PINN, Wang 2022 causal PINN — both run at 10k-100k epochs).
+
 ## What's in v0.1 (Phase 1 + 2)
 
 - Sympy-based equation DSL with `Variable`, `Parameter`, `Unknown`, `Sensor`, `System`
