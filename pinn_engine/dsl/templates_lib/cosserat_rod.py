@@ -10,12 +10,20 @@ where ``u(s, t)`` is axial displacement, ``ρ`` is density (known),
 ``E`` is Young's modulus (UNKNOWN).
 
 Boundary conditions: ``u(0, t) = 0`` (fixed), ``∂u/∂s|_{s=L} = 0`` (free).
-Initial conditions: ``u(s, 0) = u₀(s)`` (small Gaussian bump),
-``∂u/∂t|_{t=0} = 0``.
+Initial conditions: ``u(s, 0) = u₀(s)`` (Gaussian bump, amplitude 1.0
+after non-dimensionalisation), ``∂u/∂t|_{t=0} = 0``.
 
-We don't enforce BCs/ICs as separate PINN conditions in this MVP — the
-sensor data over the (s, t) domain implicitly constrains them. Future
-work: explicit BC / IC conditions for sharper convergence.
+**Non-dimensionalisation.** Real ``E`` for a soft rubber is ~ 1 MPa
+(10⁶ Pa) — a number that makes the loss landscape ill-conditioned
+because the gradient ``∂L/∂E ∝ u_ss`` is small relative to the
+distance E needs to travel from any reasonable init. To fix this, we
+factor out a reference scale ``E_ref = 10⁶`` and let the DSL discover
+a dimensionless multiplier ``E_unit ∈ [0.1, 10]`` (truth = 1.0). The
+compiled residual becomes ``ρ·u_tt - E_ref·E_unit·u_ss``; everything
+the optimizer sees is O(1).
+
+This is standard PDE-inverse-problem practice and matches the
+treatment in Wang-Wang-Perdikaris 2021 and the Auto-PINN paper.
 
 Cosserat-rod families that build on this: include shear and curvature
 strains to recover the full PyElastica / soft-robotics formulation
@@ -31,32 +39,43 @@ from pinn_engine.core.trainer import TrainConfig
 
 
 # Physical defaults — typical for a soft-rubber rod (truth ~ 1 MPa).
-RHO = 1000.0   # density [kg/m³]
-L = 1.0        # rod length [m]
-T_END = 0.01   # simulation horizon [s] — short, captures the first wave reflection
+RHO = 1000.0       # density [kg/m³]
+E_REF = 1.0e6      # reference Young's modulus [Pa] (non-dimensionalisation scale)
+L = 1.0            # rod length [m]
+T_END = 0.01       # simulation horizon [s]
 
 
 def build_system() -> System:
     s = Variable("s")
     t = Variable("t")
     u = Variable("u", depends_on=(s, t))
-    rho = Parameter("rho", value=RHO)
-    # Bounds span 0.1× to 10× the truth — wide enough to be interesting
-    # without overflowing the well-posedness check.
-    E = Unknown("E", bounds=(1e5, 1e7))
+    # Divide the equation by E_ref so the residual is O(1) when u and E_unit
+    # are both O(1). Original PDE: ρ·u_tt = E_ref·E_unit·u_ss
+    # Divided by E_ref: (ρ/E_ref)·u_tt = E_unit·u_ss
+    # At truth (E_unit=1, u_amp=1, ρ/E_ref=1e-3, u_tt≈1e5, u_ss≈100):
+    #   1e-3 · 1e5 − 1.0 · 100 = 0  ✓
+    rho_eref = Parameter("rho_over_E_ref", value=RHO / E_REF)
+    # Dimensionless multiplier in (0.1, 10). Midpoint 5.05 vs truth 1.0;
+    # AutoML must move it ~5× to converge.
+    E_unit = Unknown("E_unit", bounds=(0.1, 10.0))
     return System(
         state=[u],
-        equations=[rho * u.diff(t, 2) - E * u.diff(s, 2)],
-        sensors=[Sensor("u_meas", observes=u, noise_std=1e-4)],
+        equations=[rho_eref * u.diff(t, 2) - E_unit * u.diff(s, 2)],
+        sensors=[Sensor("u_meas", observes=u, noise_std=1e-2)],
     )
 
 
 @register_template("cosserat_rod")
 class CosseratRod:
-    """1D axial vibration of a soft rod; recover ``E`` from a strain-gauge array."""
+    """1D axial vibration of a soft rod; recover ``E`` from a strain-gauge array.
 
-    truth = {"E": 1.0e6}
-    unknown_bounds = {"E": (1e5, 1e7)}
+    The discovered unknown is the *dimensionless* multiplier ``E_unit``;
+    physical Young's modulus is ``E = E_unit · E_ref`` with
+    ``E_ref = 1 MPa``.
+    """
+
+    truth = {"E_unit": 1.0}
+    unknown_bounds = {"E_unit": (0.1, 10.0)}
 
     @staticmethod
     def system() -> System:

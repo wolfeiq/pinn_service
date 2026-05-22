@@ -90,7 +90,8 @@ def generate_cosserat_rod(
     n_s: int = 41,
     n_t: int = 201,
     n_sensors: int = 10,
-    noise_std: float = 1e-4,
+    noise_std: float = 1e-2,
+    ic_amplitude: float = 1.0,
     seed: int = 0,
 ):
     """Simulate 1-D longitudinal vibration of a Cosserat rod.
@@ -117,10 +118,12 @@ def generate_cosserat_rod(
     t_grid = np.linspace(0.0, t_end, n_t_safe)
     s_grid = np.linspace(0.0, L, n_s)
 
-    # Initial Gaussian centred at L/2.
+    # Initial Gaussian centred at L/2. Amplitude is O(1) so the optimizer
+    # has a well-conditioned loss landscape (see template docstring on
+    # non-dimensionalisation).
     s_mid = 0.5 * L
     width = 0.1 * L
-    u0 = 1e-3 * np.exp(-((s_grid - s_mid) ** 2) / (2 * width ** 2))
+    u0 = ic_amplitude * np.exp(-((s_grid - s_mid) ** 2) / (2 * width ** 2))
     # Zero at boundaries (BCs).
     u0[0] = 0.0
 
