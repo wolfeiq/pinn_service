@@ -91,6 +91,17 @@ def auto_search_space(compiled: CompiledSystem) -> Callable[[Any], TrainConfig]:
         else:
             ff, ff_sigma = 0, 1.0
 
+        # PDE inverse parameters typically need a separate (larger) LR to
+        # traverse their bounds in a reasonable epoch budget — Adam's per-
+        # parameter normalisation otherwise leaves the unknowns crawling.
+        # ODEs usually don't need this; keep default 1.0 unless we know
+        # better. Range stays log-scale and well-clear of overshoot bounds
+        # we discovered empirically on Cosserat (scale=100+ overshoots).
+        if is_pde:
+            param_lr_scale = trial.suggest_float("param_lr_scale", 1.0, 50.0, log=True)
+        else:
+            param_lr_scale = 1.0
+
         return TrainConfig(
             depth=trial.suggest_int("depth", depth_lo, depth_hi),
             width=trial.suggest_categorical("width", widths),
@@ -105,6 +116,7 @@ def auto_search_space(compiled: CompiledSystem) -> Callable[[Any], TrainConfig]:
             batch_size=batch,
             fourier_features=ff,
             fourier_sigma=ff_sigma,
+            param_lr_scale=param_lr_scale,
         )
 
     _space.__name__ = "auto_search_space"

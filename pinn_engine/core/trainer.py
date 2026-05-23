@@ -23,10 +23,57 @@ from pydantic import BaseModel, Field
 
 from pina import Trainer as PinaTrainer
 from pina.solver import PINN as PinaPINN
+from pina.solver import CausalPINN as PinaCausalPINN
 from pina.optim import TorchOptimizer
 from pina.loss import ScalarWeighting
 
 from pinn_engine.core.weightings import SAPinnWeighting, LRAWeighting
+
+
+class CausalLabeledDataPINN(PinaCausalPINN):
+    """CausalPINN variant of LabeledDataPINN.
+
+    Combines two engine-level fixes:
+      * Column extraction for multi-output data conditions (same as
+        :class:`LabeledDataPINN.loss_data`).
+      * ``param_lr_scale`` for unknown parameters (same override as
+        :class:`LabeledDataPINN.configure_optimizers`).
+
+    Plus PINA's CausalPINN time-causal residual weighting (Wang 2022,
+    arXiv:2203.07404) which empirically gives 10-100× iteration
+    reduction on wave-equation / chaotic-system inverse problems.
+    """
+
+    _engine_param_lr_scale: float = 1.0
+
+    def loss_data(self, input, target):
+        out = self.forward(input)
+        if hasattr(target, "labels") and hasattr(out, "labels"):
+            cols = [c for c in target.labels if c in out.labels]
+            if cols and len(cols) != len(out.labels):
+                out = out.extract(cols)
+        return self._loss_fn(out, target)
+
+    def configure_optimizers(self):
+        from pina.problem import InverseProblem
+
+        self.optimizer.hook(self.model.parameters())
+        scale = float(getattr(self, "_engine_param_lr_scale", 1.0))
+        if isinstance(self.problem, InverseProblem) and scale != 1.0:
+            try:
+                base_lr = self.optimizer.instance.param_groups[0]["lr"]
+            except Exception:
+                base_lr = 1e-3
+            self.optimizer.instance.add_param_group({
+                "params": [self._params[v] for v in self.problem.unknown_variables],
+                "lr": base_lr * scale,
+            })
+        elif isinstance(self.problem, InverseProblem):
+            self.optimizer.instance.add_param_group({
+                "params": [self._params[v] for v in self.problem.unknown_variables]
+            })
+        self.scheduler.hook(self.optimizer)
+        return ([self.optimizer.instance], [self.scheduler.instance])
 
 
 class LabeledDataPINN(PinaPINN):
@@ -134,6 +181,14 @@ class TrainConfig(BaseModel):
     # inverse problems where Adam's per-parameter normalization otherwise
     # makes unknowns crawl. Default 1.0 = legacy single-LR behaviour.
     param_lr_scale: float = Field(default=1.0, gt=0)
+    # Cosine-anneal the unknowns' LR from full scale → ``param_lr_min_scale ×
+    # scale`` over the Adam phase. Prevents overshoot — start aggressive so the
+    # unknown moves into the right basin, settle gently. 1.0 = no anneal.
+    param_lr_min_scale: float = Field(default=1.0, gt=0, le=1.0)
+    # Solver: "pinn" (vanilla) or "causal" (time-causal residual weighting).
+    # CausalPINN is the standard fix for wave/chaotic-PDE inverse problems
+    # (Wang 2022, arXiv:2203.07404).
+    solver_type: str = Field(default="pinn", pattern=r"^(pinn|causal)$")
     adam_epochs: int = Field(default=2000, ge=0)
     lbfgs_iters: int = Field(default=0, ge=0)
 
@@ -253,7 +308,8 @@ def train(
 
     weighting = _build_weighting(config.balancer, cond_weights)
 
-    solver = LabeledDataPINN(
+    SolverCls = CausalLabeledDataPINN if config.solver_type == "causal" else LabeledDataPINN
+    solver = SolverCls(
         problem=problem,
         model=network,
         optimizer=TorchOptimizer(torch.optim.Adam, lr=config.lr),
@@ -267,6 +323,14 @@ def train(
     solver._engine_weighting = weighting
     # Apply the separate-LR-for-unknowns config option.
     solver._engine_param_lr_scale = float(config.param_lr_scale)
+
+    # If the user wants LR annealing on the unknowns, attach the scheduler.
+    if config.param_lr_min_scale < 1.0 and config.param_lr_scale > 1.0:
+        from pinn_engine.core.param_lr_scheduler import UnknownsParamLRScheduler
+        callbacks.append(UnknownsParamLRScheduler(
+            max_epochs=config.adam_epochs,
+            min_scale=config.param_lr_min_scale,
+        ))
 
     trainer_adam = PinaTrainer(
         solver=solver,
