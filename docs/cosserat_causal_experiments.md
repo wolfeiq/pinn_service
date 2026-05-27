@@ -33,7 +33,8 @@ residual, silently muting the physics term. v466 (May 23) ran 235 epochs with
 | 7 | 40b1b194 | 10 | 100 | **sapinn** | 1e-8 | killed @ ep30 | 4.9529 | 3.95 | ~3.5h | killed: trajectory identical to #6 to within 0.001 — balancer doesn't move the needle | (no summary, killed) |
 | 8 | cbebd61f | **100** | 100 | none | 1e-8 | **50/50** | **4.0908** | **3.09** | ~5.6h | completed | [summary](../logs/cbebd61f030940d39bba1764300601be_summary.json) |
 | 9 | ea06e951 | **500** + cosine→0.05 | 100 | none | 1e-8 | **50/50** | **1.9833** | **0.98** | 19 420 | completed — but flatlines at 1.98 (likely wave-eq non-uniqueness basin) | [summary](../logs/ea06e9514ca840adbb3b329eb2ab4a37_summary.json) |
-| 10 | (PID 45787) | **500** + **no cosine** (min=1.0) | 100 | none | 1e-8 | running | tbd | tbd | running | — | — |
+| 10 | 940de904 | **500** + **no cosine** (min=1.0) | 100 | none | 1e-8 | **36/50** | **0.3757** | **0.62** | ~16 500 | jetsam-killed at ep36 (system memory pressure, ran in parallel with #11) — **transited the 1.98 basin, crossed truth=1.0 around ep9, kept descending** | (no summary, killed) |
+| 11 | 47b2886b | **500** + cosine→0.30 (min=0.3) | 100 | none | 1e-8 | **22/50** | **1.9786** | **0.98** | ~10 700 | jetsam-killed at ep22 (same memory pressure event) — re-trapped at 1.98; min_scale=0.30 still over-damps | (no summary, killed) |
 
 ### Trajectory comparison at matched epochs (E_unit)
 
@@ -75,6 +76,28 @@ E_unit reaches 2.0 by epoch 15 and then stalls — but the cosine LR has only de
 
 Run #10 tests whether removing cosine annealing lets the unknown escape that basin (oscillation around 1.98 → trapped; drift continues below 1.98 → escape possible).
 
+**Result: drift continued — basin is escapable.** Run #10 trajectory:
+
+| Epoch | E_unit | Δ per epoch | note |
+|---|---|---|---|
+| 0 | 4.385 | — | identical to #9 (seed=42) |
+| 2 | 3.313 | -0.473 | identical to #9 |
+| 5 | 2.103 | ~-0.27 | already below #9's 2.508 — diverging |
+| 7 | 1.344 | -0.32 | below the basin |
+| 8 | 1.110 | -0.235 | approaching truth |
+| **9** | **0.939** | **-0.171** | **crossed truth=1.0 between ep8 and ep9** |
+| 10 | 0.815 | -0.124 | overshoot continues |
+| 15 | 0.542 | ~-0.05 | decelerating |
+| 20 | 0.466 | -0.011 | still descending |
+| 30 | 0.402 | -0.005 | heading toward lower bound 0.1 |
+| 36 | 0.376 | -0.004 | jetsam-killed before convergence |
+
+Run #11 (cosine→0.30 instead of cosine→0.05) was the obvious follow-up — keep enough late-LR to finish drift, enough decay to brake near truth. **It re-trapped at 1.98.** Trajectory matches #9 nearly exactly: ep10=2.084, ep15=2.001, ep20=1.982, ep22=1.978 (vs #9 at ep20=1.997, ep22≈1.99). A 30% LR floor is still effectively zero in this basin — the gradient near E=1.98 is too weak for that LR to escape.
+
+**Diagnosis:** The 1.98 plateau is *not* identifiability and *not* a stationary point. It's a shallow basin that traps any LR schedule that decays below ~70-80% of peak before the unknown crosses ~1.5. With full LR throughout, the basin is fully traversable from init in <10 epochs. The remaining problem is *braking* — once the unknown crosses truth, full LR continues to push it downward toward the lower bound.
+
+Both #10 and #11 died at the same time (06:16–06:19 May 27) from a jetsam memory-pressure event (confirmed by imagent SIGABRT crashes at 06:20 and 06:41). **Do not run two MPS Lightning training jobs in parallel on this machine.**
+
 \* #4 history beyond epoch 13 wasn't dumped with the same cadence (callback added in #6).
 
 ### physics_0_loss trajectory (epoch 0 → 50)
@@ -115,10 +138,13 @@ loss weights only enter the train_loss aggregate, not the per-condition gradient
 
 ### Open hypotheses for the plateau
 
-1. **Local minimum / lazy regime.** The network finds an (E_unit ≈ 5, u(s,t))
+1. **Local minimum / lazy regime.** ~~The network finds an (E_unit ≈ 5, u(s,t))
    pair that fits the wave equation. Once there, gradient flow is genuinely small
    regardless of LR scaling. Would need to test a hot-start from E_unit ≈ 1
-   (truth) to see if the basin is stable or escape-able.
+   (truth) to see if the basin is stable or escape-able.~~ **Resolved by run #10:**
+   the 1.98 basin is shallow, not a stationary point — full LR transits it from
+   init in <10 epochs. The convergence problem reduces to LR-schedule braking
+   near truth, not identifiability or lazy regime.
 2. **Identifiability with this sensor set.** A single noisy strain-gauge + exact
    BC/IC + 50 epochs may not be enough information to pin E down. Published
    inverse-Cosserat runs use 10k–100k epochs.
