@@ -1,0 +1,57 @@
+Seed set to 42
+💡 Tip: For seamless cloud uploads and versioning, try installing [litmodels](https://pypi.org/project/litmodels/) to enable LitModelCheckpoint, which syncs automatically with the Lightning model registry.
+GPU available: True (mps), used: True
+TPU available: False, using: 0 TPU cores
+/Users/mary/Library/Python/3.9/lib/python/site-packages/lightning/pytorch/trainer/connectors/logger_connector/logger_connector.py: UserWarning: Starting from v1.9.0, `tensorboardX` has been removed as a dependency of the `lightning.pytorch` package, due to potential conflicts with other packages in the ML ecosystem. For this reason, `logger=True` will use `CSVLogger` as the default logger, unless the `tensorboard` or `tensorboardX` packages are found. Please `pip install lightning[extra]` or one of them to enable TensorBoard support by default
+/Users/mary/Library/Python/3.9/lib/python/site-packages/lightning/pytorch/trainer/configuration_validator.py: PossibleUserWarning: You defined a `validation_step` but have no `val_dataloader`. Skipping val loop.
+/Users/mary/Library/Python/3.9/lib/python/site-packages/pina/solver/physics_informed_solver/pinn_interface.py: UserWarning: Compilation is disabled for torch >= 2.8. Forcing compilation may cause runtime errors or instability.
+┏━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━┓
+┃   ┃ Name         ┃ Type       ┃ Params ┃ Mode  ┃ FLOPs ┃
+┡━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━┩
+│ 0 │ _pina_models │ ModuleList │ 25.7 K │ train │     0 │
+│ 1 │ _loss_fn     │ MSELoss    │      0 │ train │     0 │
+└───┴──────────────┴────────────┴────────┴───────┴───────┘
+Trainable params: 25.7 K                                                        
+Non-trainable params: 0                                                         
+Total params: 25.7 K                                                            
+Total estimated model params size (MB): 0                                       
+Modules in train mode: 21                                                       
+Modules in eval mode: 0                                                         
+Total FLOPs: 0                                                                  
+/Users/mary/Library/Python/3.9/lib/python/site-packages/lightning/pytorch/loops/fit_loop.py: PossibleUserWarning: The number of training batches (4) is smaller than the logging interval Trainer(log_every_n_steps=50). Set a lower value for log_every_n_steps if you want to see logs for the training epoch.
+`Trainer.fit` stopped: `max_epochs=50` reached.
+Epoch 49/49 ━━━━━━━━━━━━━━━━━━ 4/4 0:06:27 • 0:00:00 0.00it/s v_num: 475.000    
+                                                              physics_0_loss_st…
+                                                              7.478             
+                                                              train_loss_step:  
+                                                              7.478             
+                                                              physics_0_loss_ep…
+                                                              7.842             
+                                                              train_loss_epoch: 
+                                                              7.842             
+======================================================================
+RESULT
+======================================================================
+{
+  "run_id": "ea06e9514ca840adbb3b329eb2ab4a37",
+  "elapsed_sec": 19420.0,
+  "final_loss": 7.841709136962891,
+  "final_params": {
+    "E_unit": 1.9833012819290161
+  },
+  "truth": {
+    "E_unit": 1.0
+  },
+  "rel_err": {
+    "E_unit": 0.9833012819290161
+  },
+  "config": {
+    "solver_type": "causal",
+    "causal_eps_init": 1e-08,
+    "causal_eps_anneal": true,
+    "causal_eps_max": 100.0,
+    "adam_epochs": 50
+  }
+}
+
+Summary written to: /Users/mary/pinn_service/logs/ea06e9514ca840adbb3b329eb2ab4a37_summary.json

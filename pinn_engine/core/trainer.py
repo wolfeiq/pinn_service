@@ -54,6 +54,34 @@ class CausalLabeledDataPINN(PinaCausalPINN):
                 out = out.extract(cols)
         return self._loss_fn(out, target)
 
+    def loss_phys(self, samples, equation):
+        # Mirrors PINA's CausalPINN.loss_phys but stashes per-bucket
+        # residuals and causal weights so the eps-annealer callback and
+        # diagnostics can detect the failure mode where ω_i collapses
+        # to ~0 and physics is silently muted.
+        chunks, labels = self._split_tensor_into_chunks(samples)
+        time_loss = []
+        for chunk in chunks:
+            chunk.labels = labels
+            residual = self.compute_residual(samples=chunk, equation=equation)
+            loss_val = self._loss_fn(
+                torch.zeros_like(residual, requires_grad=True), residual
+            )
+            time_loss.append(loss_val)
+        time_loss = torch.stack(time_loss)
+        with torch.no_grad():
+            weights = self._compute_weights(time_loss)
+            self._last_causal_time_loss = time_loss.detach()
+            self._last_causal_weights = weights.detach()
+            max_bucket = float(time_loss.max())
+            min_weight = float(weights.min())
+            active = int((weights > 1e-3).sum())
+            self.log("causal/max_bucket_loss", max_bucket, on_step=False, on_epoch=True)
+            self.log("causal/min_weight", min_weight, on_step=False, on_epoch=True)
+            self.log("causal/active_buckets", float(active), on_step=False, on_epoch=True)
+            self.log("causal/eps", float(self._eps), on_step=False, on_epoch=True)
+        return (weights * time_loss).mean()
+
     def configure_optimizers(self):
         from pina.problem import InverseProblem
 
@@ -189,6 +217,15 @@ class TrainConfig(BaseModel):
     # CausalPINN is the standard fix for wave/chaotic-PDE inverse problems
     # (Wang 2022, arXiv:2203.07404).
     solver_type: str = Field(default="pinn", pattern=r"^(pinn|causal)$")
+    # CausalPINN ε. PINA's default is 100, which collapses ω_i = exp(-ε·Σ L_r)
+    # to ~0 on epoch 1 for any non-trivial residual, silently muting physics.
+    # Wang 2022 §3.2 recommends starting small (≈1) and annealing up.
+    causal_eps: float = Field(default=1.0, gt=0)
+    # If true, attach CausalEpsAnnealer: start at causal_eps, ×10 each time
+    # max-bucket residual drops below causal_eps_threshold, cap at causal_eps_max.
+    causal_eps_anneal: bool = False
+    causal_eps_max: float = Field(default=100.0, gt=0)
+    causal_eps_threshold: float = Field(default=1e-2, gt=0)
     adam_epochs: int = Field(default=2000, ge=0)
     lbfgs_iters: int = Field(default=0, ge=0)
 
@@ -308,13 +345,19 @@ def train(
 
     weighting = _build_weighting(config.balancer, cond_weights)
 
-    SolverCls = CausalLabeledDataPINN if config.solver_type == "causal" else LabeledDataPINN
-    solver = SolverCls(
+    is_causal = config.solver_type == "causal"
+    SolverCls = CausalLabeledDataPINN if is_causal else LabeledDataPINN
+    solver_kwargs = dict(
         problem=problem,
         model=network,
         optimizer=TorchOptimizer(torch.optim.Adam, lr=config.lr),
         weighting=weighting,
     )
+    if is_causal:
+        # Without this, PINA defaults to eps=100 → ω_i collapse → physics ignored.
+        eps_init = config.causal_eps if not config.causal_eps_anneal else config.causal_eps
+        solver_kwargs["eps"] = eps_init
+    solver = SolverCls(**solver_kwargs)
     # Make context available to our diagnostic callbacks.
     solver._compiled_system = compiled
     solver._engine_data = data
@@ -330,6 +373,14 @@ def train(
         callbacks.append(UnknownsParamLRScheduler(
             max_epochs=config.adam_epochs,
             min_scale=config.param_lr_min_scale,
+        ))
+
+    # Wang 2022 §3.2 ε-annealing: bump ε once max-bucket residual is small.
+    if is_causal and config.causal_eps_anneal:
+        from pinn_engine.core.causal_eps_scheduler import CausalEpsAnnealer
+        callbacks.append(CausalEpsAnnealer(
+            eps_max=config.causal_eps_max,
+            threshold=config.causal_eps_threshold,
         ))
 
     trainer_adam = PinaTrainer(

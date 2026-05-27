@@ -1,0 +1,21 @@
+{
+  "run_id": "d8f486e2f858413c9ebda5c3f3b281a2",
+  "elapsed_sec": 19917.0,
+  "final_loss": 8.457402229309082,
+  "final_params": {
+    "E_unit": 5.040326118469238
+  },
+  "truth": {
+    "E_unit": 1.0
+  },
+  "rel_err": {
+    "E_unit": 4.040326118469238
+  },
+  "config": {
+    "solver_type": "causal",
+    "causal_eps_init": 1e-08,
+    "causal_eps_anneal": true,
+    "causal_eps_max": 100.0,
+    "adam_epochs": 50
+  }
+}
