@@ -42,16 +42,22 @@ class UnknownsParamLRScheduler(pl.Callback):
         min_scale: float = 0.05,
         trigger_below: float | None = None,
         trigger_param: str | None = None,
+        taper_epochs: int | None = None,
     ):
         super().__init__()
         self.max_epochs = max(int(max_epochs), 1)
         self.min_scale = float(min_scale)
         # Two-phase mode: stay at full LR while the watched unknown is above
-        # ``trigger_below``; once it crosses, snap into cosine taper from that
-        # epoch over the remaining budget. ``trigger_param`` selects which
-        # unknown to watch (by name); default = first unknown found.
+        # ``trigger_below``; once it crosses, cosine-taper to min_scale.
+        # ``trigger_param`` selects which unknown to watch (by name);
+        # default = first unknown found. ``taper_epochs`` sets how many epochs
+        # the post-trigger cosine takes to reach min_scale (default = all
+        # remaining epochs). A short taper brakes fast — necessary here because
+        # the unknown descends ~0.2/epoch at trigger and a full-budget cosine
+        # stays near full LR too long, overshooting truth before it bites.
         self.trigger_below = float(trigger_below) if trigger_below is not None else None
         self.trigger_param = trigger_param
+        self.taper_epochs = int(taper_epochs) if taper_epochs is not None else None
         self._base_lr: float | None = None
         self._unknowns_group_idx: int | None = None
         self._trigger_epoch: int | None = None
@@ -112,14 +118,23 @@ class UnknownsParamLRScheduler(pl.Callback):
                 if current <= self.trigger_below:
                     self._trigger_epoch = ep
             if self._trigger_epoch is None:
-                # Pre-trigger: hold at base LR.
-                trainer.optimizers[0].param_groups[self._unknowns_group_idx]["lr"] = self._base_lr
+                # Pre-trigger: stay SILENT — do not write the LR. PINA's
+                # ConstantLR warmup (1/3 for 5 epochs, then full) governs this
+                # phase. Writing base_lr here would (a) override the warmup,
+                # unleashing full LR against a cold network → overshoot (run
+                # #15), and (b) inflate the value the warmup milestone ×3s at
+                # epoch 5 → a 1.5 spike. Letting the warmup run is what made
+                # the only clean escape (run #10) descend gradually.
                 return
         # Compute cosine progress. In two-phase mode, the cosine spans
-        # [trigger_epoch, max_epochs] instead of [0, max_epochs] so the
-        # taper actually happens over the post-escape window.
+        # [trigger_epoch, trigger_epoch + taper_epochs] (or to max_epochs if
+        # taper_epochs is None) so the taper happens over the post-escape
+        # window. A short span brakes fast.
         start = self._trigger_epoch if self._trigger_epoch is not None else 0
-        span = max(self.max_epochs - start, 1)
+        if self._trigger_epoch is not None and self.taper_epochs is not None:
+            span = max(self.taper_epochs, 1)
+        else:
+            span = max(self.max_epochs - start, 1)
         progress = min((ep - start) / span, 1.0)
         cos_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
         scale = self.min_scale + (1.0 - self.min_scale) * cos_factor

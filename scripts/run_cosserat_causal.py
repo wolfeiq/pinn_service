@@ -70,12 +70,19 @@ def main():
     # unknown at lr_scale~167, not 500 — that, not "cosine", is why they
     # trapped at ~1.95. Fix: read ConstantLR.base_lrs (true 0.5) + pass a
     # constant scheduler so our callback owns the LR. ***
-    # Run #15: two-phase at the TRUE lr=500. Hold full LR until E_unit < 1.5
-    # (past the basin floor at ~2), then cosine taper to 5% over remaining
-    # epochs to brake near truth=1.0.
+    # Run #15 (two-phase, true lr=500, warmup removed): OVERSHOT violently —
+    # full LR vs a cold network = 1.5 units/epoch, blew past truth into the
+    # lower bound (0.1) in 3 epochs. Lesson: PINA's ConstantLR warmup is
+    # load-bearing (lets the network fit before the unknown moves fast); keep
+    # it, and make UnknownsParamLRScheduler silent pre-trigger.
+    # Run #16: warmup kept, callback silent until trigger. Trigger at E<2.0
+    # (just past the basin floor, leaving room to decelerate) then cosine-brake
+    # over only 5 epochs (taper_epochs) to min 2%. Hand-calc off #10's real
+    # per-epoch steps predicts landing E ≈ 0.93-1.0.
     cfg.param_lr_scale = 500.0
-    cfg.param_lr_min_scale = 0.05
-    cfg.param_lr_trigger_below = 1.5
+    cfg.param_lr_min_scale = 0.02
+    cfg.param_lr_trigger_below = 2.0
+    cfg.param_lr_taper_epochs = 5
     cfg.lam_data_init = 100.0
     cfg.balancer = "none"
 

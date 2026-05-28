@@ -222,6 +222,9 @@ class TrainConfig(BaseModel):
     param_lr_trigger_below: Optional[float] = None
     # Which unknown to watch for the trigger. None = first unknown.
     param_lr_trigger_param: Optional[str] = None
+    # Post-trigger, complete the cosine taper over this many epochs (a short
+    # window brakes fast). None = taper over all remaining epochs.
+    param_lr_taper_epochs: Optional[int] = None
     # Solver: "pinn" (vanilla) or "causal" (time-causal residual weighting).
     # CausalPINN is the standard fix for wave/chaotic-PDE inverse problems
     # (Wang 2022, arXiv:2203.07404).
@@ -369,17 +372,13 @@ def train(
         optimizer=TorchOptimizer(torch.optim.Adam, lr=config.lr),
         weighting=weighting,
     )
-    if needs_scheduler:
-        # PINA defaults to ConstantLR(factor=1/3, total_iters=5) — a warmup
-        # that (a) runs the LR at 1/3 for 5 epochs and (b) at its milestone
-        # multiplies the *current* group LR by 3. When UnknownsParamLRScheduler
-        # also writes the group LR, the two fight: the milestone turns our
-        # 0.5 into 1.5 for one epoch. Pass a true-constant scheduler (factor 1,
-        # no milestone) so our callback is the sole controller of the LR.
-        from pina.optim import TorchScheduler
-        solver_kwargs["scheduler"] = TorchScheduler(
-            torch.optim.lr_scheduler.ConstantLR, factor=1.0, total_iters=1
-        )
+    # NB: we deliberately keep PINA's default ConstantLR(factor=1/3, 5-epoch)
+    # warmup. It is load-bearing — it holds the unknowns' LR at 1/3 while the
+    # network fits a coarse solution, so when the LR jumps to full at epoch 5
+    # the unknown descends gradually instead of overshooting. Run #15 removed
+    # the warmup and the unknown blew past truth into the lower bound in 3
+    # epochs (1.5 units/epoch). UnknownsParamLRScheduler is therefore silent
+    # pre-trigger (see its on_train_epoch_start) so it never fights the warmup.
     if is_causal:
         # Without this, PINA defaults to eps=100 → ω_i collapse → physics ignored.
         eps_init = config.causal_eps if not config.causal_eps_anneal else config.causal_eps
@@ -404,6 +403,7 @@ def train(
             min_scale=config.param_lr_min_scale,
             trigger_below=config.param_lr_trigger_below,
             trigger_param=config.param_lr_trigger_param,
+            taper_epochs=config.param_lr_taper_epochs,
         ))
 
     # Wang 2022 §3.2 ε-annealing: bump ε once max-bucket residual is small.
