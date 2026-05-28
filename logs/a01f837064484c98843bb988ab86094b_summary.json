@@ -1,0 +1,18 @@
+{
+  "run_id": "a01f837064484c98843bb988ab86094b",
+  "elapsed_sec": 32.94404196739197,
+  "final_params": {
+    "D": 0.09828673303127289
+  },
+  "truth": {
+    "D": 0.1
+  },
+  "rel_err": {
+    "D": 0.017132669687271174
+  },
+  "config": {
+    "param_lr_scale": 100.0,
+    "adam_epochs": 50,
+    "two_phase": false
+  }
+}

@@ -5,7 +5,7 @@ from pinn_engine.dsl.templates_lib import damped_oscillator, lorenz, diffusion_1
 from pinn_engine.dsl.templates import get_template
 
 
-@pytest.mark.parametrize("name", ["damped_oscillator", "lorenz"])
+@pytest.mark.parametrize("name", ["damped_oscillator", "lorenz", "diffusion_1d"])
 def test_template_system_and_data(name):
     tpl = get_template(name)
     sys = tpl.system()
@@ -20,12 +20,15 @@ def test_template_system_and_data(name):
     assert cfg.depth >= 2 and cfg.width >= 8
 
 
-def test_diffusion_1d_is_phase3_placeholder():
+def test_diffusion_1d_data_and_input_order():
     tpl = get_template("diffusion_1d")
-    with pytest.raises(NotImplementedError):
-        tpl.system()
+    comp = tpl.system().compile()
+    # Space-first convention: input columns must be (x, t).
+    assert comp.input_names == ("x", "t")
     data, truth = tpl.synthetic_data(seed=0)
     assert "u_meas" in data and truth == {"D": 0.1}
+    meas_input, _ = data["u_meas"]
+    assert meas_input.shape[1] == 2
 
 
 def test_objective_returns_relative_error():
