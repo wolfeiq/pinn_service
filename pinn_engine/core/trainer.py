@@ -213,6 +213,15 @@ class TrainConfig(BaseModel):
     # scale`` over the Adam phase. Prevents overshoot — start aggressive so the
     # unknown moves into the right basin, settle gently. 1.0 = no anneal.
     param_lr_min_scale: float = Field(default=1.0, gt=0, le=1.0)
+    # Two-phase LR: hold full base LR until the watched unknown crosses
+    # ``param_lr_trigger_below``, then start cosine taper from that epoch
+    # over the remaining epoch budget. Useful when an unknown must escape
+    # a spurious basin before braking — full LR keeps the gradient signal
+    # alive through the basin, cosine kicks in only after escape. None =
+    # standard single-phase cosine.
+    param_lr_trigger_below: Optional[float] = None
+    # Which unknown to watch for the trigger. None = first unknown.
+    param_lr_trigger_param: Optional[str] = None
     # Solver: "pinn" (vanilla) or "causal" (time-causal residual weighting).
     # CausalPINN is the standard fix for wave/chaotic-PDE inverse problems
     # (Wang 2022, arXiv:2203.07404).
@@ -347,12 +356,30 @@ def train(
 
     is_causal = config.solver_type == "causal"
     SolverCls = CausalLabeledDataPINN if is_causal else LabeledDataPINN
+
+    # Do we drive the unknowns' LR ourselves (cosine and/or two-phase trigger)?
+    needs_scheduler = (
+        (config.param_lr_min_scale < 1.0 or config.param_lr_trigger_below is not None)
+        and config.param_lr_scale > 1.0
+    )
+
     solver_kwargs = dict(
         problem=problem,
         model=network,
         optimizer=TorchOptimizer(torch.optim.Adam, lr=config.lr),
         weighting=weighting,
     )
+    if needs_scheduler:
+        # PINA defaults to ConstantLR(factor=1/3, total_iters=5) — a warmup
+        # that (a) runs the LR at 1/3 for 5 epochs and (b) at its milestone
+        # multiplies the *current* group LR by 3. When UnknownsParamLRScheduler
+        # also writes the group LR, the two fight: the milestone turns our
+        # 0.5 into 1.5 for one epoch. Pass a true-constant scheduler (factor 1,
+        # no milestone) so our callback is the sole controller of the LR.
+        from pina.optim import TorchScheduler
+        solver_kwargs["scheduler"] = TorchScheduler(
+            torch.optim.lr_scheduler.ConstantLR, factor=1.0, total_iters=1
+        )
     if is_causal:
         # Without this, PINA defaults to eps=100 → ω_i collapse → physics ignored.
         eps_init = config.causal_eps if not config.causal_eps_anneal else config.causal_eps
@@ -367,12 +394,16 @@ def train(
     # Apply the separate-LR-for-unknowns config option.
     solver._engine_param_lr_scale = float(config.param_lr_scale)
 
-    # If the user wants LR annealing on the unknowns, attach the scheduler.
-    if config.param_lr_min_scale < 1.0 and config.param_lr_scale > 1.0:
+    # Attach the unknowns' LR scheduler (cosine and/or two-phase trigger).
+    # ``needs_scheduler`` was computed above so we could also swap PINA's
+    # default warmup scheduler for a true constant before solver construction.
+    if needs_scheduler:
         from pinn_engine.core.param_lr_scheduler import UnknownsParamLRScheduler
         callbacks.append(UnknownsParamLRScheduler(
             max_epochs=config.adam_epochs,
             min_scale=config.param_lr_min_scale,
+            trigger_below=config.param_lr_trigger_below,
+            trigger_param=config.param_lr_trigger_param,
         ))
 
     # Wang 2022 §3.2 ε-annealing: bump ε once max-bucket residual is small.

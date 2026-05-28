@@ -4,6 +4,41 @@ Tracking the May 24–25, 2026 run series. Truth: `E_unit = 1.0`. All runs use
 `template=cosserat_rod`, `seed=42`, `adam_epochs=50` (unless noted), with
 `UnknownsDumper` writing E_unit per epoch (run #4 onward).
 
+## The LR-capture bug (May 28) — invalidates the "cosine traps the basin" conclusion
+
+**TL;DR: runs #9, #11, #12, #14 never actually ran at lr_scale=500. They ran at
+~167. The "cosine annealing traps the unknown in the 1.98 basin" finding was an
+artifact of this bug, not a real property of the loss landscape.**
+
+PINA wraps every optimizer in `torch.optim.lr_scheduler.ConstantLR(factor=1/3,
+total_iters=5)` — a 5-epoch warmup that runs the LR at ⅓ of target, then jumps to
+full at epoch 5. `UnknownsParamLRScheduler` captured its `base_lr` by reading
+`param_groups[idx]["lr"]` at `on_train_start` — i.e. the **warmup-discounted**
+value (0.1667 = 0.5 × ⅓), not the true 0.5. It then *pinned* the LR there every
+epoch, both running the unknown 3× too slow and defeating ConstantLR's jump to
+full LR at epoch 5.
+
+Consequence: any run with a scheduler attached (cosine or two-phase) trained the
+unknown at effective lr_scale ≈ 167. Run #10 escaped the basin *only* because it
+had **no** scheduler attached, so ConstantLR was free to restore lr=0.5 at epoch
+5. So the real discriminator across #9–#14 was "scheduler attached (LR pinned 3×
+low) vs not", not the cosine shape.
+
+Verified by an instrumented run (`/tmp/debug_lr.py`-style probe): pre-fix the
+unknowns LR read 0.1667 and stuck; post-fix it holds 0.5 every epoch.
+
+**Fix** (trainer.py + param_lr_scheduler.py):
+
+1. `UnknownsParamLRScheduler.on_train_start` now reads the true target LR from the
+   scheduler's `base_lrs[idx]`, falling back to the param-group LR only if absent.
+2. When the engine drives the unknowns' LR (cosine/two-phase), `train()` swaps
+   PINA's warmup `ConstantLR` for a true-constant `ConstantLR(factor=1.0,
+   total_iters=1)` — otherwise the warmup's epoch-5 milestone multiplies the
+   current LR by 3, turning our 0.5 into a 1.5 spike for one epoch (the two
+   schedulers fight over the same param group).
+
+Re-running the two-phase experiment at the true lr=500 as run #15.
+
 ## The bug
 
 PINA's `CausalPINN.__init__` defaults to `eps=100`. The temporal causal weight
@@ -35,6 +70,10 @@ residual, silently muting the physics term. v466 (May 23) ran 235 epochs with
 | 9 | ea06e951 | **500** + cosine→0.05 | 100 | none | 1e-8 | **50/50** | **1.9833** | **0.98** | 19 420 | completed — but flatlines at 1.98 (likely wave-eq non-uniqueness basin) | [summary](../logs/ea06e9514ca840adbb3b329eb2ab4a37_summary.json) |
 | 10 | 940de904 | **500** + **no cosine** (min=1.0) | 100 | none | 1e-8 | **36/50** | **0.3757** | **0.62** | ~16 500 | jetsam-killed at ep36 (system memory pressure, ran in parallel with #11) — **transited the 1.98 basin, crossed truth=1.0 around ep9, kept descending** | (no summary, killed) |
 | 11 | 47b2886b | **500** + cosine→0.30 (min=0.3) | 100 | none | 1e-8 | **22/50** | **1.9786** | **0.98** | ~10 700 | jetsam-killed at ep22 (same memory pressure event) — re-trapped at 1.98; min_scale=0.30 still over-damps | (no summary, killed) |
+| 12 | 9a9c5932 | **500** + cosine→0.70 (min=0.7) | 100 | none | 1e-8 | killed @ ep20 | (trending ~1.95) | ~0.95 | ~2.8h | killed: trajectory trapping like #9/#11 — **CONFOUNDED, see LR-capture bug below** | — |
+| 13 | 8cc08c1b | 400 + no cosine | 100 | none | 1e-8 | killed @ ep14 | (asymptote ~1.35 est.) | ~0.35 | ~1.75h | killed: escaped basin but stalled ~1.35. No scheduler attached → **not** confounded; genuine lr=400 result | — |
+| 14 | 1ff4955a | **500** two-phase (trigger<1.5, min=0.05) | 100 | none | 1e-8 | killed @ ep36 | (trending ~1.91) | ~0.91 | ~4.2h | killed: trapped — **CONFOUNDED.** Surfaced the LR-capture bug: trigger never fired because LR was pinned 3× low so E never reached 1.5 | — |
+| 15 | (running) | **500** two-phase (trigger<1.5, min=0.05) | 100 | none | 1e-8 | running | tbd | tbd | running | first run with LR-capture bug FIXED — true lr=500 held pre-trigger | — |
 
 ### Trajectory comparison at matched epochs (E_unit)
 
@@ -94,7 +133,13 @@ Run #10 tests whether removing cosine annealing lets the unknown escape that bas
 
 Run #11 (cosine→0.30 instead of cosine→0.05) was the obvious follow-up — keep enough late-LR to finish drift, enough decay to brake near truth. **It re-trapped at 1.98.** Trajectory matches #9 nearly exactly: ep10=2.084, ep15=2.001, ep20=1.982, ep22=1.978 (vs #9 at ep20=1.997, ep22≈1.99). A 30% LR floor is still effectively zero in this basin — the gradient near E=1.98 is too weak for that LR to escape.
 
-**Diagnosis:** The 1.98 plateau is *not* identifiability and *not* a stationary point. It's a shallow basin that traps any LR schedule that decays below ~70-80% of peak before the unknown crosses ~1.5. With full LR throughout, the basin is fully traversable from init in <10 epochs. The remaining problem is *braking* — once the unknown crosses truth, full LR continues to push it downward toward the lower bound.
+**Diagnosis (PARTIALLY SUPERSEDED — see "The LR-capture bug" section above):** The
+1.98 plateau is *not* identifiability and *not* a stationary point — that part holds:
+run #10 transited it cleanly at full LR. But the claim that "cosine schedules trap
+because they decay LR below ~70-80%" was wrong. #11's re-trap (and #12's, #14's) was
+the LR-capture bug pinning the LR at 3× too low, *not* the cosine shape. The correct
+statement: the basin is shallow and escapable at the true lr=500; the open question
+(braking near truth without overshooting) is what run #15 tests with the bug fixed.
 
 Both #10 and #11 died at the same time (06:16–06:19 May 27) from a jetsam memory-pressure event (confirmed by imagent SIGABRT crashes at 06:20 and 06:41). **Do not run two MPS Lightning training jobs in parallel on this machine.**
 

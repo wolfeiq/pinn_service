@@ -56,12 +56,26 @@ def main():
     # this time, to test whether the 1.98 basin is escapable.
     # Run 940de904 (lr=500, no cosine): broke through the 1.98 basin
     # at ep5-7, crossed truth=1.0 around ep9, then kept descending —
-    # currently at 0.66 (ep12), likely heading to lower bound. Confirms
-    # the basin IS escapable but no-cosine overshoots. Going moderate
-    # cosine: min_scale=0.3 keeps late-stage LR at 30% — enough to
-    # finish drift but not enough to oscillate past 1.0 violently.
+    # ended at 0.376 (ep36, jetsam-killed). Basin IS escapable, but
+    # no-cosine overshoots.
+    # Run 47b2886b (lr=500, min_scale=0.3): re-trapped at 1.978 (ep22,
+    # jetsam-killed). Run 9a9c5932 (lr=500, min_scale=0.7): also
+    # trapping, asymptoting at ~1.95 (geometric decay confirmed by ep20).
+    # Run 8cc08c1b (lr=400, no cosine): escaped basin but stalled at
+    # ~1.35 (geometric asymptote) — pure lr_scale tuning is brittle.
+    # *** LR-CAPTURE BUG (found & fixed): PINA wraps the optimizer in
+    # ConstantLR(factor=1/3, 5-ep warmup). UnknownsParamLRScheduler was
+    # capturing the warmup-discounted LR (0.1667) as "base" and pinning it,
+    # so every scheduler-attached run (#9,#11,#12,#14) secretly trained the
+    # unknown at lr_scale~167, not 500 — that, not "cosine", is why they
+    # trapped at ~1.95. Fix: read ConstantLR.base_lrs (true 0.5) + pass a
+    # constant scheduler so our callback owns the LR. ***
+    # Run #15: two-phase at the TRUE lr=500. Hold full LR until E_unit < 1.5
+    # (past the basin floor at ~2), then cosine taper to 5% over remaining
+    # epochs to brake near truth=1.0.
     cfg.param_lr_scale = 500.0
-    cfg.param_lr_min_scale = 0.3
+    cfg.param_lr_min_scale = 0.05
+    cfg.param_lr_trigger_below = 1.5
     cfg.lam_data_init = 100.0
     cfg.balancer = "none"
 
