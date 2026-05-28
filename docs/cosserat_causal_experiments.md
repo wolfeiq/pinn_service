@@ -4,6 +4,30 @@ Tracking the May 24–25, 2026 run series. Truth: `E_unit = 1.0`. All runs use
 `template=cosserat_rod`, `seed=42`, `adam_epochs=50` (unless noted), with
 `UnknownsDumper` writing E_unit per epoch (run #4 onward).
 
+## SOLVED (run #16, May 28): E_unit = 0.9546, rel_err 4.5%
+
+First converged run after a 16-run series that was stuck at ≥35% error. The
+working recipe:
+
+- `param_lr_scale = 500` — the unknown needs this much LR amplification to move
+  against Adam's per-parameter normalization (lr=1/100 leave it ~frozen).
+- **Keep** PINA's `ConstantLR(factor=1/3, 5-epoch)` warmup — load-bearing: it
+  lets the network fit a coarse solution before the unknown moves fast. Removing
+  it (run #15) overshot to the lower bound.
+- `UnknownsParamLRScheduler` **silent pre-trigger** — the warmup governs the
+  gradual descent through the basin; the callback does nothing until the trigger.
+- `param_lr_trigger_below = 2.0` — fire the brake just past the basin floor (~2),
+  while E is still high enough to leave deceleration room.
+- `param_lr_taper_epochs = 5`, `min_scale = 0.02` — brake *fast* (a full-budget
+  cosine brakes too late). 5-epoch cosine from full LR → 2%.
+
+Trajectory: warmup+descent to 2.10 (ep5) → trigger at ep6 → decelerate
+1.34→1.13→1.02 (ep7-9) → cross truth ep10 → settle at 0.955 and hold for 40
+epochs. Predicted landing (hand-calc off #10's per-epoch steps) was 0.93-1.0.
+
+Open: it settles slightly *below* truth (0.955). Triggering a hair higher or
+braking a touch harder would center it on 1.0; 4.5% is already a converged result.
+
 ## The LR-capture bug (May 28) — invalidates the "cosine traps the basin" conclusion
 
 **TL;DR: runs #9, #11, #12, #14 never actually ran at lr_scale=500. They ran at
@@ -73,7 +97,8 @@ residual, silently muting the physics term. v466 (May 23) ran 235 epochs with
 | 12 | 9a9c5932 | **500** + cosine→0.70 (min=0.7) | 100 | none | 1e-8 | killed @ ep20 | (trending ~1.95) | ~0.95 | ~2.8h | killed: trajectory trapping like #9/#11 — **CONFOUNDED, see LR-capture bug below** | — |
 | 13 | 8cc08c1b | 400 + no cosine | 100 | none | 1e-8 | killed @ ep14 | (asymptote ~1.35 est.) | ~0.35 | ~1.75h | killed: escaped basin but stalled ~1.35. No scheduler attached → **not** confounded; genuine lr=400 result | — |
 | 14 | 1ff4955a | **500** two-phase (trigger<1.5, min=0.05) | 100 | none | 1e-8 | killed @ ep36 | (trending ~1.91) | ~0.91 | ~4.2h | killed: trapped — **CONFOUNDED.** Surfaced the LR-capture bug: trigger never fired because LR was pinned 3× low so E never reached 1.5 | — |
-| 15 | (running) | **500** two-phase (trigger<1.5, min=0.05) | 100 | none | 1e-8 | running | tbd | tbd | running | first run with LR-capture bug FIXED — true lr=500 held pre-trigger | — |
+| 15 | b5a0e180 | **500** two-phase, **warmup removed** | 100 | none | 1e-8 | killed @ ep24 | 0.099 (lower bound) | 0.90 | ~2.8h | killed: OVERSHOT. Removing PINA's warmup → full lr=500 vs cold network → 1.5/epoch → blew past truth to lower bound in 3 epochs. Warmup is load-bearing | — |
+| **16** | **50900a86** | **500** two-phase, **warmup KEPT**, trigger<2.0, taper 5ep, min 0.02 | 100 | none | 1e-8 | **50/50** | **0.9546** | **0.045** | 19 823 | **✓ CONVERGED** — first run to land near truth. Warmup + silent-pre-trigger callback + fast 5-epoch brake | [summary](../logs/50900a868cd449d892e11a935bf4d606_summary.json) |
 
 ### Trajectory comparison at matched epochs (E_unit)
 
