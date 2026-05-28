@@ -225,6 +225,12 @@ class TrainConfig(BaseModel):
     # Post-trigger, complete the cosine taper over this many epochs (a short
     # window brakes fast). None = taper over all remaining epochs.
     param_lr_taper_epochs: Optional[int] = None
+    # Auto-adaptive controller: keep each unknown's per-epoch velocity in a
+    # healthy band by adapting its LR at runtime (ramp when frozen/trapped,
+    # brake when oscillating). Removes the need to hand-tune param_lr_scale and
+    # the two-phase trigger/taper. Mutually exclusive with the manual two-phase
+    # scheduler; when on, param_lr_scale is the controller's starting scale.
+    adaptive_unknowns_lr: bool = False
     # Solver: "pinn" (vanilla) or "causal" (time-causal residual weighting).
     # CausalPINN is the standard fix for wave/chaotic-PDE inverse problems
     # (Wang 2022, arXiv:2203.07404).
@@ -361,9 +367,11 @@ def train(
     SolverCls = CausalLabeledDataPINN if is_causal else LabeledDataPINN
 
     # Do we drive the unknowns' LR ourselves (cosine and/or two-phase trigger)?
+    # The adaptive controller is an alternative LR driver and takes precedence.
     needs_scheduler = (
         (config.param_lr_min_scale < 1.0 or config.param_lr_trigger_below is not None)
         and config.param_lr_scale > 1.0
+        and not config.adaptive_unknowns_lr
     )
 
     solver_kwargs = dict(
@@ -405,6 +413,12 @@ def train(
             trigger_param=config.param_lr_trigger_param,
             taper_epochs=config.param_lr_taper_epochs,
         ))
+
+    # Auto-adaptive controller (alternative to the manual scheduler): adapts
+    # the unknowns' LR at runtime to keep their velocity in a healthy band.
+    if config.adaptive_unknowns_lr:
+        from pinn_engine.core.adaptive_controller import AdaptiveUnknownsController
+        callbacks.append(AdaptiveUnknownsController())
 
     # Wang 2022 §3.2 ε-annealing: bump ε once max-bucket residual is small.
     if is_causal and config.causal_eps_anneal:
