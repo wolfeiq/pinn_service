@@ -62,33 +62,33 @@ class AdaptiveUnknownsController(pl.Callback):
         warmup_epochs: int = 5,
         v_lo: float = 3e-3,
         v_hi: float = 4e-2,
-        lr_up: float = 2.0,
-        lr_down: float = 0.5,
-        min_mult: float = 0.05,
-        max_mult: float = 200.0,
-        patience: int = 4,
-        loss_eps: float = 1e-3,
+        lr_down: float = 0.6,
+        probe_boost: float = 2.0,
+        probe_window: int = 3,
+        stall_patience: int = 2,
+        escape_eps: float = 2e-2,
         worse_threshold: float = 0.5,
+        min_mult: float = 0.02,
+        max_mult: float = 50.0,
         converged_mult: float = 0.2,
         stop_on_converge: bool = False,
     ):
         super().__init__()
         self.warmup_epochs = int(warmup_epochs)
-        self.v_lo = float(v_lo)
-        self.v_hi = float(v_hi)
-        self.lr_up = float(lr_up)
-        self.lr_down = float(lr_down)
+        self.v_lo = float(v_lo)               # below → stalled (maybe probe)
+        self.v_hi = float(v_hi)               # above → too fast (brake)
+        self.lr_down = float(lr_down)         # brake factor (recoverable)
+        self.probe_boost = float(probe_boost) # LR ×this during a probe (bounded)
+        self.probe_window = int(probe_window) # epochs to hold a probe
+        self.stall_patience = int(stall_patience)  # stalled epochs before probing
+        self.escape_eps = float(escape_eps)   # loss-drop over a probe that counts as "productive"
+        # A jump this large counts as real divergence (brake hard); set high so
+        # noisy/causal-loss jitter doesn't spuriously brake a healthy descent.
+        self.worse_threshold = float(worse_threshold)
         self.min_mult = float(min_mult)
         self.max_mult = float(max_mult)
-        self.patience = int(patience)
-        self.loss_eps = float(loss_eps)
-        # A probe is only "diverging" if the loss jumps by this fraction — set
-        # high (50%) so causal/noisy-loss jitter doesn't spuriously brake the
-        # LR during a healthy descent. Real divergence is far larger (≫50%).
-        self.worse_threshold = float(worse_threshold)
         self.converged_mult = float(converged_mult)
         self.stop_on_converge = bool(stop_on_converge)
-        self._best_loss: float = float("inf")
 
         self._group_idx: Optional[int] = None
         self._base_lr: Optional[float] = None
@@ -96,8 +96,12 @@ class AdaptiveUnknownsController(pl.Callback):
         self._ranges: dict = {}          # name -> bound width
         self._prev: dict = {}            # name -> previous value
         self._prev_v: dict = {}          # name -> previous signed velocity
-        self._mult: float = 1.0
+        self._base_mult: float = 1.0     # committed LR multiplier
         self._stall: int = 0
+        self._state: str = "descend"     # descend | probe | converged
+        self._probe_t: int = 0
+        self._probe_loss0: Optional[float] = None
+        self._probe_val0: dict = {}      # unknown values at probe entry
         self._prev_loss: Optional[float] = None
         self.converged: bool = False
         self.history: list = []          # per-epoch telemetry for diagnostics
@@ -165,57 +169,86 @@ class AdaptiveUnknownsController(pl.Callback):
             self._prev_v[name] = v
         max_rel_v = max(rel_vs) if rel_vs else 0.0
 
-        # Loss feedback: did the LR ramp recently buy us anything?
         loss = self._read_loss(trainer)
-        improving = loss is not None and loss < self._best_loss * (1.0 - self.loss_eps)
-        # Overshoot signal: a probe that pushed the loss *up* means the LR is
-        # too high right now — brake hard and immediately, before it diverges.
-        worse = (
+        # Real divergence (not noise): brake hard regardless of state.
+        diverging = (
             loss is not None and self._prev_loss is not None
             and loss > self._prev_loss * (1.0 + self.worse_threshold)
         )
+
+        # ---- state machine -------------------------------------------------
+        # eff_mult is the multiplier actually applied this epoch; base_mult is
+        # the committed level we return to between probes.
+        if self._state == "descend":
+            if osc or max_rel_v > self.v_hi or diverging:
+                # Overshoot — brake the committed level (recoverable via probes).
+                self._base_mult *= self.lr_down
+                self._stall = 0
+            elif max_rel_v < self.v_lo:
+                # Stalled. After a little patience, probe: is more LR productive?
+                self._stall += 1
+                if self._stall >= self.stall_patience:
+                    self._state = "probe"
+                    self._probe_t = 0
+                    self._probe_loss0 = loss if loss is not None else self._prev_loss
+                    self._probe_val0 = {n: float(p.detach().item())
+                                        for n, p in self._params.items()}
+            else:
+                self._stall = 0                    # healthy band — hold
+            eff_mult = self._base_mult
+
+        elif self._state == "probe":
+            self._probe_t += 1
+            eff_mult = self._base_mult * self.probe_boost
+            # Abort early if the boost is clearly diverging.
+            if diverging:
+                self._base_mult *= self.lr_down
+                self._state = "descend"
+                self._stall = 0
+            elif self._probe_t >= self.probe_window:
+                dropped = (
+                    loss is not None and self._probe_loss0 is not None
+                    and loss < self._probe_loss0 * (1.0 - self.escape_eps)
+                )
+                # Did the *unknown* move under the boosted LR? A loss drop with a
+                # motionless unknown is just the network polishing the field —
+                # not an escape. At a true optimum the gradient ~0 so the unknown
+                # won't move however high the LR; in a basin/creep it will.
+                moved = max(
+                    abs(float(p.detach().item()) - self._probe_val0.get(n, 0.0))
+                    / self._ranges[n]
+                    for n, p in self._params.items()
+                ) > self.v_lo
+                if dropped and moved:
+                    # Higher LR is productively moving the unknown to a better
+                    # solution → commit it and keep descending.
+                    self._base_mult *= self.probe_boost
+                    self._state = "descend"
+                    self._stall = 0
+                else:
+                    # More LR can't reduce the loss by moving the unknown →
+                    # genuine optimum.
+                    self._state = "converged"
+                    self.converged = True
+                    self._base_mult = self.converged_mult
+                    if self.stop_on_converge:
+                        trainer.should_stop = True
+        else:  # converged
+            eff_mult = self.converged_mult
+
+        self._base_mult = min(max(self._base_mult, self.min_mult), self.max_mult)
+        eff_mult = min(max(eff_mult, self.min_mult), self.max_mult)
         if loss is not None:
-            self._best_loss = min(self._best_loss, loss)
             self._prev_loss = loss
 
-        # Update the multiplier.
-        if osc or max_rel_v > self.v_hi or worse:
-            self._mult *= self.lr_down            # brake (too fast / oscillating / diverging)
-            self._stall = 0
-        elif max_rel_v < self.v_lo:
-            # Frozen / plateaued.
-            if improving:
-                # The current LR IS working — the loss is still dropping (the
-                # network is fitting the field, the unknown will follow).
-                # HOLD; do not ramp, or we destabilise a converging solution.
-                self._stall = 0
-            else:
-                # Stagnant AND frozen → probe by ramping LR to test whether a
-                # better (lower-loss) solution is reachable, i.e. a shallow
-                # basin. If ramping reduces the loss, `improving` flips true
-                # next epoch and we stop ramping. If it never does, the probe
-                # counter runs out → genuine optimum → converged.
-                self._mult *= self.lr_up
-                self._stall += 1
-        else:
-            self._stall = 0                       # healthy band, hold
-        self._mult = min(max(self._mult, self.min_mult), self.max_mult)
-
-        # Converged: ramping the LR no longer reduces the loss → genuine
-        # optimum, not a shallow basin. Rest the LR low so we don't drift off it.
-        if self._stall >= self.patience and not self.converged:
-            self.converged = True
-            self._mult = self.converged_mult
-            if self.stop_on_converge:
-                trainer.should_stop = True
-
-        lr = self._base_lr * self._mult
+        lr = self._base_lr * eff_mult
         trainer.optimizers[0].param_groups[self._group_idx]["lr"] = lr
 
         self.history.append({
             "epoch": ep, "max_rel_v": max_rel_v, "osc": osc, "loss": loss,
-            "improving": improving, "worse": worse, "mult": self._mult, "lr": lr,
-            "stall": self._stall, "converged": self.converged,
+            "state": self._state, "diverging": diverging, "base_mult": self._base_mult,
+            "eff_mult": eff_mult, "lr": lr, "stall": self._stall,
+            "converged": self.converged,
         })
 
     @staticmethod
