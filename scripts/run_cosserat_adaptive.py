@@ -40,10 +40,15 @@ def main():
     cfg.lbfgs_iters = 0
     cfg.balancer = "none"
     cfg.lam_data_init = 100.0
-    # Adaptive controller instead of the hand-tuned two-phase recipe. 50 is the
-    # controller's STARTING scale; it ramps to escape the basin and brakes near
-    # truth on its own.
-    cfg.param_lr_scale = 50.0
+    # Adaptive controller instead of the hand-tuned two-phase recipe.
+    # Start HIGH (500): braking is the controller's reliable direction (it
+    # triggers unconditionally on oscillation / loss-worsening), whereas
+    # ramping UP is gated by "hold while loss improving". A first attempt
+    # starting at scale 50 crawled — the slow descent looked "healthy +
+    # improving" so the controller never ramped. Starting at 500 (the known
+    # escape LR) lets it descend fast and brake near truth; diffusion at 500
+    # still converges (1.8%) because the brake tames the over-high start.
+    cfg.param_lr_scale = 500.0
 
     ctrl = AdaptiveUnknownsController()
 
