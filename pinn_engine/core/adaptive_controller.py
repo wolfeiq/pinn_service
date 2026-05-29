@@ -68,6 +68,7 @@ class AdaptiveUnknownsController(pl.Callback):
         max_mult: float = 200.0,
         patience: int = 4,
         loss_eps: float = 1e-3,
+        worse_threshold: float = 0.5,
         converged_mult: float = 0.2,
         stop_on_converge: bool = False,
     ):
@@ -81,6 +82,10 @@ class AdaptiveUnknownsController(pl.Callback):
         self.max_mult = float(max_mult)
         self.patience = int(patience)
         self.loss_eps = float(loss_eps)
+        # A probe is only "diverging" if the loss jumps by this fraction — set
+        # high (50%) so causal/noisy-loss jitter doesn't spuriously brake the
+        # LR during a healthy descent. Real divergence is far larger (≫50%).
+        self.worse_threshold = float(worse_threshold)
         self.converged_mult = float(converged_mult)
         self.stop_on_converge = bool(stop_on_converge)
         self._best_loss: float = float("inf")
@@ -167,7 +172,7 @@ class AdaptiveUnknownsController(pl.Callback):
         # too high right now — brake hard and immediately, before it diverges.
         worse = (
             loss is not None and self._prev_loss is not None
-            and loss > self._prev_loss * (1.0 + self.loss_eps)
+            and loss > self._prev_loss * (1.0 + self.worse_threshold)
         )
         if loss is not None:
             self._best_loss = min(self._best_loss, loss)
