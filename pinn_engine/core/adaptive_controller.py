@@ -68,6 +68,7 @@ class AdaptiveUnknownsController(pl.Callback):
         stall_patience: int = 2,
         escape_eps: float = 2e-2,
         worse_threshold: float = 0.5,
+        data_worse_threshold: float = 0.1,
         min_mult: float = 0.02,
         max_mult: float = 50.0,
         converged_mult: float = 0.2,
@@ -85,6 +86,11 @@ class AdaptiveUnknownsController(pl.Callback):
         # A jump this large counts as real divergence (brake hard); set high so
         # noisy/causal-loss jitter doesn't spuriously brake a healthy descent.
         self.worse_threshold = float(worse_threshold)
+        # *Data*-loss rise that counts as the unknown drifting past truth. Data
+        # loss is what pins the unknown to observations; total loss can fall
+        # while data rises (physics polishing masks the drift) — so monitor
+        # data loss separately and tighter.
+        self.data_worse_threshold = float(data_worse_threshold)
         self.min_mult = float(min_mult)
         self.max_mult = float(max_mult)
         self.converged_mult = float(converged_mult)
@@ -103,6 +109,7 @@ class AdaptiveUnknownsController(pl.Callback):
         self._probe_loss0: Optional[float] = None
         self._probe_val0: dict = {}      # unknown values at probe entry
         self._prev_loss: Optional[float] = None
+        self._prev_data_loss: Optional[float] = None
         self.converged: bool = False
         self.history: list = []          # per-epoch telemetry for diagnostics
 
@@ -170,17 +177,26 @@ class AdaptiveUnknownsController(pl.Callback):
         max_rel_v = max(rel_vs) if rel_vs else 0.0
 
         loss = self._read_loss(trainer)
+        data_loss = self._read_data_loss(trainer)
         # Real divergence (not noise): brake hard regardless of state.
         diverging = (
             loss is not None and self._prev_loss is not None
             and loss > self._prev_loss * (1.0 + self.worse_threshold)
+        )
+        # Data-loss rising = the unknown drifted past where the observations
+        # want it. The total-loss divergence brake misses this when physics
+        # loss is still falling fast enough to mask the data-fit drift —
+        # which is how run #3 overshot truth into the lower bound.
+        data_worse = (
+            data_loss is not None and self._prev_data_loss is not None
+            and data_loss > self._prev_data_loss * (1.0 + self.data_worse_threshold)
         )
 
         # ---- state machine -------------------------------------------------
         # eff_mult is the multiplier actually applied this epoch; base_mult is
         # the committed level we return to between probes.
         if self._state == "descend":
-            if osc or max_rel_v > self.v_hi or diverging:
+            if osc or max_rel_v > self.v_hi or diverging or data_worse:
                 # Overshoot — brake the committed level (recoverable via probes).
                 self._base_mult *= self.lr_down
                 self._stall = 0
@@ -200,8 +216,9 @@ class AdaptiveUnknownsController(pl.Callback):
         elif self._state == "probe":
             self._probe_t += 1
             eff_mult = self._base_mult * self.probe_boost
-            # Abort early if the boost is clearly diverging.
-            if diverging:
+            # Abort early if the boost is clearly diverging or pushing the
+            # unknown away from the data fit.
+            if diverging or data_worse:
                 self._base_mult *= self.lr_down
                 self._state = "descend"
                 self._stall = 0
@@ -240,15 +257,18 @@ class AdaptiveUnknownsController(pl.Callback):
         eff_mult = min(max(eff_mult, self.min_mult), self.max_mult)
         if loss is not None:
             self._prev_loss = loss
+        if data_loss is not None:
+            self._prev_data_loss = data_loss
 
         lr = self._base_lr * eff_mult
         trainer.optimizers[0].param_groups[self._group_idx]["lr"] = lr
 
         self.history.append({
             "epoch": ep, "max_rel_v": max_rel_v, "osc": osc, "loss": loss,
-            "state": self._state, "diverging": diverging, "base_mult": self._base_mult,
-            "eff_mult": eff_mult, "lr": lr, "stall": self._stall,
-            "converged": self.converged,
+            "data_loss": data_loss, "state": self._state,
+            "diverging": diverging, "data_worse": data_worse,
+            "base_mult": self._base_mult, "eff_mult": eff_mult, "lr": lr,
+            "stall": self._stall, "converged": self.converged,
         })
 
     @staticmethod
@@ -268,3 +288,20 @@ class AdaptiveUnknownsController(pl.Callback):
                 except Exception:
                     pass
         return None
+
+    @staticmethod
+    def _read_data_loss(trainer) -> Optional[float]:
+        """Sum of per-condition data losses (keys like ``data_<sensor>_loss_epoch``).
+        PINA logs each data condition separately; we aggregate. Returns None if
+        no data-condition keys are present."""
+        metrics = getattr(trainer, "callback_metrics", None) or {}
+        total, found = 0.0, False
+        for k, v in metrics.items():
+            ks = str(k).lower()
+            if ks.startswith("data_") and "loss" in ks and ks.endswith("_epoch"):
+                try:
+                    total += float(v)
+                    found = True
+                except Exception:
+                    pass
+        return total if found else None
