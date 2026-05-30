@@ -66,11 +66,11 @@ class AdaptiveUnknownsController(pl.Callback):
         probe_boost: float = 2.0,
         probe_window: int = 3,
         stall_patience: int = 2,
-        escape_eps: float = 2e-2,
+        escape_eps: float = 0.1,
         worse_threshold: float = 0.5,
         data_worse_threshold: float = 0.1,
         min_mult: float = 0.02,
-        max_mult: float = 50.0,
+        max_mult: float = 4.0,
         converged_mult: float = 0.2,
         stop_on_converge: bool = False,
     ):
@@ -293,15 +293,25 @@ class AdaptiveUnknownsController(pl.Callback):
     def _read_data_loss(trainer) -> Optional[float]:
         """Sum of per-condition data losses (keys like ``data_<sensor>_loss_epoch``).
         PINA logs each data condition separately; we aggregate. Returns None if
-        no data-condition keys are present."""
-        metrics = getattr(trainer, "callback_metrics", None) or {}
-        total, found = 0.0, False
-        for k, v in metrics.items():
-            ks = str(k).lower()
-            if ks.startswith("data_") and "loss" in ks and ks.endswith("_epoch"):
-                try:
-                    total += float(v)
-                    found = True
-                except Exception:
-                    pass
-        return total if found else None
+        no data-condition keys are present.
+
+        Check both ``callback_metrics`` and ``logged_metrics`` because PINA
+        routes per-condition losses through ``logged_metrics`` (the
+        ``callback_metrics`` view sometimes only exposes the aggregate
+        ``train_loss``). First time round we read only ``callback_metrics`` and
+        got ``None`` every epoch — silent miss.
+        """
+        for src_name in ("callback_metrics", "logged_metrics"):
+            metrics = getattr(trainer, src_name, None) or {}
+            total, found = 0.0, False
+            for k, v in metrics.items():
+                ks = str(k).lower()
+                if ks.startswith("data_") and "loss" in ks and ks.endswith("_epoch"):
+                    try:
+                        total += float(v)
+                        found = True
+                    except Exception:
+                        pass
+            if found:
+                return total
+        return None
