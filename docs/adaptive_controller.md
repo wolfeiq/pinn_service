@@ -32,20 +32,43 @@ unknown starts moving). After warmup it maintains a *committed* multiplier
   1.2 → 2.4 → 4.8 → 9.6 → 19.2 → overshoot to lower bound). Capping at 4×
   starting LR is enough for the basin escape we've measured.
 
-## Validation (all with zero per-problem config)
+## Validation across all 6 bundled inverse templates
 
-| problem | class | result | hand-tuned baseline |
-|---|---|---|---|
-| `diffusion_1d` | parabolic PDE | **D = 0.0984, rel_err 1.6%** | 1.7% |
-| `damped_oscillator` | ODE, 2 unknowns | **c=0.501 (0.11%), k=10.001 (0.01%)** | — |
-| `cosserat_rod` | wave-eq PDE (basin) | **E = 0.9201, rel_err 8.0%** | 4.5% (two-phase #16) |
+Each run uses `adaptive_unknowns_lr=True` and the **template's own
+`default_config().param_lr_scale`** (do NOT force a universal value — see
+"Pitfall" below).
 
-Diffusion and oscillator latch as converged. Cosserat does not latch (it keeps
-probing-and-no-op'ing against the cap), but the cap is what saves it from the
-runaway that ended iter #4 at 53% error. Telemetry from the basin run shows
-three commits (`base_mult` 0.6 → 1.2 → 2.4 → 4.0) at ep18, 22, 27, then the
-cap holds for 25+ further epochs. The descent stayed at a controlled ~-0.013
-units/epoch and crossed truth at ep42, settling at 0.92.
+| problem | class | result | hand-tuned baseline | notes |
+|---|---|---|---|---|
+| `damped_oscillator` | ODE, 2 unknowns | c **0.11%**, k **0.01%** | — | latches converged |
+| `lorenz` | ODE, 3 unknowns | σ 0%, ρ 0%, β **0.03%** | — | latches converged |
+| `pendulum` | ODE, 1 unknown | c **0.85%** | — | latches; needs full 1500 epochs |
+| `fossen_surge` | ODE, partial-id | X_u **13%**, X_uu **15%** | ~10% | matches baseline; residual is inherent partial-identifiability |
+| `diffusion_1d` | parabolic PDE | D **1.6%** | 1.7% | latches |
+| `cosserat_rod` | wave-eq basin | E **8.0%** | 4.5% (two-phase) | cap holds; can't latch (probes useless against cap) |
+
+Diffusion, oscillator, lorenz, pendulum all latch as converged. Cosserat
+doesn't latch (it keeps probing-and-no-op'ing against the cap), but the cap
+is what saves it from the runaway that ended iter #4 at 53% error. Telemetry
+from the basin run shows three commits (`base_mult` 0.6 → 1.2 → 2.4 → 4.0)
+at ep18, 22, 27, then the cap holds for 25+ further epochs. Descent stayed
+at a controlled ~-0.013 units/epoch and crossed truth at ep42, settling at
+0.92. Fossen's residual error is inherent — `m·u̇ = τ + X_u·u + X_uu·u²` has
+two unknowns with a multiplicative coupling, so the data doesn't uniquely
+pin both. The controller correctly identifies "no probe can improve further"
+and latches; closing the gap needs tighter bounds or more sensors, not
+better control.
+
+## Pitfall: do not force a universal `param_lr_scale`
+
+Cosserat's E_unit is O(1) but its physics residual gradient on E is tiny, so
+it needs lr_scale=500 for the unknown to move at all. Fossen's X_u is O(10)
+with a much stronger gradient and converges fine at lr_scale=1.0. Forcing
+500 on Fossen overshoots the unknowns by ~100× the right step and the
+controller can't recover (it reaches 90% rel_err). Each template's
+`default_config().param_lr_scale` reflects this problem-specific knowledge
+— treat it as a starting point the controller adapts from, not something to
+override.
 
 ## The R&D path that got here (5 iterations)
 
