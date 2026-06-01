@@ -49,10 +49,16 @@ def _unknown_l2_prior_term(solver) -> Optional[torch.Tensor]:
     anchors = getattr(solver, "_engine_unknown_l2_anchors", None) or {}
     total = None
     for name, p in params.items():
-        anchor = float(anchors.get(name, 0.0))
+        # Only regularize unknowns the user (or auto-fill) put in the anchors
+        # dict. If a name is absent, that unknown has no prior — silently
+        # skipping it avoids pulling unrelated unknowns toward bad midpoints
+        # when the user supplies a partial anchor (e.g. ``{"Y_v": -30}``).
+        if name not in anchors:
+            continue
+        anchor = float(anchors[name])
         term = ((p - anchor) ** 2).sum()
         total = term if total is None else total + term
-    return lam * total
+    return lam * total if total is not None else None
 
 
 class CausalLabeledDataPINN(PinaCausalPINN):
@@ -461,12 +467,22 @@ def train(
     solver._engine_weighting = weighting
     # Apply the separate-LR-for-unknowns config option.
     solver._engine_param_lr_scale = float(config.param_lr_scale)
-    # L2 prior on unknowns (default no-op). Anchor defaults to bound midpoints.
+    # L2 prior on unknowns (default no-op). Anchor semantics:
+    #   - cfg.unknown_l2_anchor is None  → apply to ALL unknowns at bound midpoints
+    #     (back-compat with the "uniform prior" default).
+    #   - cfg.unknown_l2_anchor is a dict → apply ONLY to the listed unknowns;
+    #     unspecified ones get no prior (no midpoint auto-fill). This avoids
+    #     "I just want a prior on Y_v" silently wrecking X_u and N_r by
+    #     pulling them toward unrelated midpoints.
     solver._engine_unknown_l2_prior = float(config.unknown_l2_prior)
     if config.unknown_l2_prior > 0.0:
-        anchors = dict(config.unknown_l2_anchor or {})
-        for name, (lo, hi) in (compiled.unknown_bounds or {}).items():
-            anchors.setdefault(name, 0.5 * (lo + hi))
+        if config.unknown_l2_anchor is None:
+            anchors = {
+                name: 0.5 * (lo + hi)
+                for name, (lo, hi) in (compiled.unknown_bounds or {}).items()
+            }
+        else:
+            anchors = dict(config.unknown_l2_anchor)
         solver._engine_unknown_l2_anchors = anchors
 
     # Attach the unknowns' LR scheduler (cosine and/or two-phase trigger).
