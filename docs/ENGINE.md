@@ -1,0 +1,706 @@
+# `pinn-engine` — engineering reference
+
+Single-file reference for the engine: changelog, architecture, capabilities,
+training pipeline, and all the math. Authoritative as of 2026-06-02; see the
+git log for newer changes.
+
+---
+
+## Table of contents
+
+1. [What it is](#what-it-is)
+2. [Changelog](#changelog)
+3. [Architecture](#architecture)
+4. [Capabilities](#capabilities)
+5. [The training pipeline](#the-training-pipeline)
+6. [The mathematics](#the-mathematics)
+7. [Templates inventory](#templates-inventory)
+8. [Public API surface](#public-api-surface)
+9. [Known limitations + open issues](#known-limitations--open-issues)
+
+---
+
+## What it is
+
+An **inverse Physics-Informed Neural Network engine**: you write the equations
+you know plus the parameters you want to discover, hand it noisy sensor data,
+and it gives you back the physical parameters that make your sensors consistent
+with your physics — with diagnostics and a reproducibility manifest per run.
+
+Built on **PINA** (PINN library) + **PyTorch Lightning** (training loop) +
+**Optuna** (AutoML). The novel pieces in this repo are:
+
+- A **symbolic equation DSL** so PDEs/ODEs are declared once and lowered to
+  torch callables, sensors, and the PINA problem object automatically.
+- A **runtime LR controller** (`AdaptiveUnknownsController`) that auto-tunes
+  the unknowns' LR via velocity-band + loss-probe state machine, replacing
+  hand-tuned `param_lr_scale` and the two-phase trigger/taper.
+- A **Tikhonov L2 prior** on unknowns for partial-identifiability.
+- An **iterative bound-tightening** meta-loop (`iterative_train`) for
+  precision sharpening of well-posed problems.
+- **CausalPINN** (Wang 2022) with an ε-annealer for wave-equation inverse.
+- A **reproducibility manifest** + diagnostics (UQ ensemble, spectral bias,
+  parameter confidence, sensor residuals) per run.
+
+Bundled with 7 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
+3-DOF ODE, 2 PDE — see [Templates inventory](#templates-inventory)).
+
+---
+
+## Changelog
+
+Reverse chronological. Commit SHAs in parens. Major moments **bold**.
+
+### Adaptive control + regularization era (May 28 – Jun 02, 2026)
+
+- (**f8a26be** 2026-06-02) L2 prior bug fix: partial anchor now only
+  regularizes listed unknowns; previously auto-filled midpoints could
+  silently pull other unknowns wrong.
+- (**ca06504** 2026-06-01) **`fossen_3dof` template added** (7th template):
+  coupled surge-sway-yaw drag inverse, first multi-unknown coupled ODE.
+- (**4eefc14** 2026-06-01) `iterative_train` meta-loop: shrinks bounds
+  around each result and re-trains. Pendulum 19% → 0.43% in two iterations.
+- (**0da13a7** 2026-06-01) **L2 (Tikhonov) prior on unknowns** added. Fossen
+  X_u 13% → 0.78% with truth anchor.
+- (**2e2b695** 2026-05-31) Adaptive controller validated across all 6
+  templates; "use template's own `param_lr_scale`" guidance written.
+- (**82999e2** 2026-05-31) **Cosserat basin auto-tune cracked**: adaptive
+  controller lands E_unit at 0.92 (rel_err 8%), cap-mediated.
+- (`7119ad7` 2026-05-31) Controller fix: data-loss read uses both
+  `callback_metrics` + `logged_metrics`; `max_mult` capped at 4 to prevent
+  exponential commit runaway; `escape_eps` raised 2% → 10%.
+- (`314fef0` 2026-05-30) Data-loss brake added (catches monotonic overshoot
+  the velocity-based brakes miss).
+- (**d53877f** 2026-05-30) **Controller redesigned** as DESCEND/PROBE/CONVERGED
+  state machine with bounded reversible probes.
+- (`08c6886` 2026-05-30) Loss-worse brake threshold raised to 50% so noisy
+  causal loss doesn't spuriously brake during healthy descent.
+- (`63487ff` / `962cfdf` / **c5eacbf** 2026-05-29) `AdaptiveUnknownsController`
+  added: runtime LR controller, validated on diffusion (1.6%) and ODEs (<0.5%).
+- (**9ff93d8** 2026-05-29) **`diffusion_1d` template implemented** (was stubbed);
+  converges to 1.6% with plain config — recipe generalizes to parabolic PDEs.
+
+### Cosserat / two-phase recipe era (May 24 – May 28, 2026)
+
+- (**9a826ff** 2026-05-28) **Cosserat solved (4.5% rel_err)** via two-phase
+  LR recipe (run #16). Warmup + silent-pre-trigger + trigger E<2.0 + 5-epoch
+  cosine brake.
+- (`5aea820` 2026-05-28) Keep PINA's warmup; silent pre-trigger; add
+  `taper_epochs` knob.
+- (**66fdd2a** 2026-05-28) **LR-capture bug fixed**: scheduler was reading
+  the warmup-discounted LR (×⅓) as base, secretly training the unknown 3×
+  too slow.
+- (`6122b7f` 2026-05-27) Cosserat causal: causal_eps=100 collapse bug fixed,
+  `UnknownsDumper`, experiments doc.
+- (`41c32ea` / `04343f7` 2026-05-26) PDE convergence work: cosine LR anneal,
+  separate `param_lr_scale` for unknowns.
+- (`542c8d6` / `e254db3` / `632be29` / `0ae9ee4` / `8ed36be` 2026-05-25-26)
+  Cosserat hardening: non-dimensionalise, BC/IC as pseudo-sensors, Fourier
+  features mandatory, "any problem" push.
+
+### Phase 3 — PDE support (May 17 – May 23, 2026)
+
+- (**0bdc980** 2026-05-23) **Phase 3+: PDE support** (space + time) and
+  Cosserat rod template.
+- (`e5f2e54` 2026-05-22) Diagnostic callbacks: PDE-aware input construction.
+- (`321c318` / `0f80c63` 2026-05-21) **Phase 5: Streamlit dashboard**.
+- (`f7eece8` / `b0d4e0d` / `c6c9271` / `36efa9f` 2026-05-20) Fossen 12-trial
+  AutoML, EKF baseline, ensemble UQ + pendulum + ROS 2 bag ingestion, ONNX/
+  TorchScript export.
+- (`31a703e` 2026-05-18) Phase 3: Fossen 1-DOF surge inverse template.
+
+### Phase 1+2 foundation (Apr 21 – May 17, 2026)
+
+- (`78b7778` / `27e5cb7` / `7912e8a` / `be02a58` / `703422e` / `3db93ce` /
+  `cea53cd` / `529cc67` 2026-05-12 – 17) MPS device sensitivity, L-BFGS
+  inverse support, multi-seed AutoML, SA-PINN/LRA balancers wired,
+  multi-seed AutoML, verify tolerance loosened, session report.
+- (`b83b86f` / `84cd208` 2026-04-30 – 05-04) AutoML: custom pruning
+  callback, monitor metric fix.
+- (`cf89328` 2026-04-25) Multi-output data conditions fix for Lorenz.
+- (**ff3a989** 2026-04-21) **Initial commit**: inverse PINN engine with
+  AutoML (Phase 1+2).
+
+---
+
+## Architecture
+
+```
+pinn_engine/
+├── dsl/                       Symbolic DSL — declare physics + sensors
+│   ├── symbols.py             Variable / Parameter / Unknown / Sensor
+│   ├── system.py              System builder + compile() → CompiledSystem
+│   ├── compile.py             Lowers sympy → torch residual callables
+│   ├── templates.py           Template registry
+│   └── templates_lib/         The 7 bundled templates
+│
+├── core/                      Training engine
+│   ├── trainer.py             TrainConfig + train(); subclassed PINA solvers
+│   │                          (CausalLabeledDataPINN, LabeledDataPINN, LBFGSInversePINN)
+│   ├── problem.py             build_problem() — lowers CompiledSystem +
+│   │                          data → PINA InverseProblem; supports
+│   │                          bounds_override / inits_override
+│   ├── networks.py            MLP + Fourier-feature input encoding
+│   ├── activations.py         Custom activations (sintanh)
+│   ├── weightings.py          SAPinnWeighting, LRAWeighting balancers
+│   ├── adaptive_controller.py AdaptiveUnknownsController state machine
+│   ├── iterative_train.py     iterative_train() refinement meta-loop
+│   ├── param_lr_scheduler.py  Manual two-phase LR scheduler (legacy/precision)
+│   ├── causal_eps_scheduler.py  CausalPINN ε-annealer (Wang 2022)
+│   └── unknowns_dumper.py     Per-epoch unknown-parameter JSON dump
+│
+├── data/
+│   └── synthetic.py           Reference data generators per template
+│
+├── automl/                    Optuna search infra
+│   ├── search.py              SearchStudy + objective wrapper
+│   ├── pruning.py             TrainLossPruningCallback (Hyperband)
+│   ├── space.py               Per-template search space construction
+│   └── auto_space.py          "Any problem" auto-search-space heuristic
+│
+├── diagnostics/               Drop-in callbacks
+│   ├── sensor_residuals.py
+│   ├── spectral_bias.py
+│   └── param_confidence.py
+│
+├── repro/                     Reproducibility manifests
+│   ├── manifest.py
+│   └── hashing.py
+│
+├── dashboard/                 Streamlit live dashboard (Phase 5)
+│   ├── app.py
+│   └── data.py
+│
+├── uq.py                      Deep-ensemble uncertainty
+├── export.py                  ONNX + TorchScript export with round-trip verify
+└── cli.py                     `pinn-engine train|search|verify|dashboard|...`
+```
+
+**Data flow (one training run):**
+
+```
+Template ──→ System ──compile()──→ CompiledSystem (residual fns, sensor obs fns,
+                                                    unknown bounds + inits)
+   │
+   └─── synthetic_data() ─→ {sensor_name: (input_array, target_array)}
+              │
+              ▼
+      build_problem(compiled, data, t_range, spatial_ranges,
+                    bounds_override, inits_override)
+              │
+              ▼
+      PINA InverseProblem instance (conditions: physics_0, data_<sensor>...)
+              │
+              ▼
+      Solver (CausalLabeledDataPINN | LabeledDataPINN | LBFGSInversePINN)
+              │
+              ▼
+      PINA Trainer + callbacks:
+        - UnknownsDumper                  (per-epoch JSON)
+        - AdaptiveUnknownsController      (LR control state machine)
+        - CausalEpsAnnealer (if causal)   (Wang 2022 ε-anneal)
+        - UnknownsParamLRScheduler (legacy two-phase)
+              │
+              ▼
+      TrainResult { final_params, final_loss, problem, network, compiled, ... }
+```
+
+---
+
+## Capabilities
+
+What the engine handles **today** (2026-06-02):
+
+**Problem classes:**
+
+- **ODE inverse** with 1+ unknowns, optionally coupled (Lorenz 3 unknowns,
+  Fossen 3-DOF 3 coupled drag coefficients).
+- **PDE inverse** with 1 spatial + 1 temporal variable; data conditions,
+  physics conditions, IC and BC as pseudo-sensors.
+- **Partial-identifiability problems** (data doesn't uniquely pin all
+  unknowns) — addressed via the L2 prior with explicit anchor.
+
+**Inverse-problem solving tools:**
+
+- `AdaptiveUnknownsController` — auto-tune the unknowns' LR at runtime
+  (no per-problem hand tuning of `param_lr_scale`).
+- L2 prior (`unknown_l2_prior` + `unknown_l2_anchor`) for ill-posed cases.
+- `iterative_train()` — meta-loop that shrinks bounds and re-trains for
+  precision sharpening.
+- Manual two-phase LR (`param_lr_trigger_below` + `param_lr_taper_epochs`)
+  — precision tuning when you know the basin shape.
+- CausalPINN solver (`solver_type="causal"`) + bi-directional ε-anneal
+  for wave-equation / chaotic inverse problems.
+- Loss balancers: `"none"`, `"sapinn"` (self-adaptive PINN), `"lra"`
+  (learning-rate annealing).
+- L-BFGS post-Adam refinement via `LBFGSInversePINN` (merges param groups
+  so torch.LBFGS accepts the inverse-problem set-up).
+
+**Architecture features:**
+
+- MLP with Fourier feature input encoding (critical for PDE high-frequency
+  content).
+- Custom activations including `sintanh` (oscillation-friendly).
+- LayerNorm (default on).
+
+**AutoML:**
+
+- Optuna study with Hyperband pruning (`TrainLossPruningCallback` — reports
+  train-loss every 100 epochs since PINN inverse has no validation set).
+- Per-template `automl_space()` constructors; `auto_space.py` heuristic for
+  templates that don't have one yet.
+- Multi-seed evaluation (variance + median).
+
+**Diagnostics + reproducibility:**
+
+- Per-epoch unknown-parameter JSON dump (survives OOM/SIGKILL).
+- Sensor-residual diagnostic callback.
+- Spectral-bias diagnostic (frequency-domain network output analysis).
+- Parameter-confidence diagnostic (bootstrap-style).
+- Deep-ensemble UQ (`pinn_engine.uq`).
+- Reproducibility manifest per run (hashes everything: equation canonical
+  form, data, config, network init).
+- ONNX + TorchScript export with round-trip verification (tolerance 5%
+  default — non-deterministic ops on CPU/MPS make 0.1% unrealistic).
+
+**Tooling:**
+
+- `pinn-engine train|search|verify|dashboard|...` CLI (Typer).
+- Streamlit dashboard over manifests + Optuna studies (live training
+  progress + equation editor).
+- ROS 2 bag ingestion for real AUV data.
+
+**Outputs:**
+
+- Per-unknown point estimate + final loss.
+- Per-epoch unknown trajectory (JSON).
+- Lightning CSV log per run.
+- (Optional) ensemble UQ posterior over unknowns.
+- (Optional) ONNX/TorchScript model export.
+
+---
+
+## The training pipeline
+
+Step-by-step, what happens inside `train(system, data, config, callbacks=…)`:
+
+1. **Seed everything** (`pl.seed_everything(config.seed)`).
+2. **Compile the system** (`system.compile()`):
+   - Validates: state has `depends_on`, sensors observe declared states,
+     equations only reference declared symbols, bounds are valid.
+   - Lowers each sympy `equation` to a torch callable that takes
+     `(samples, network, unknown_dict, params)` and returns the residual.
+   - Returns a `CompiledSystem` with `state_names`, `input_names`,
+     `unknown_names`, `unknown_bounds`, `unknown_inits`, `residuals`,
+     `obs_fns`, `eq_hash`.
+3. **Build the PINA problem** (`build_problem()`):
+   - Constructs the `CartesianDomain`s: temporal + (PDE only) spatial.
+   - Builds `unknown_parameter_domain` from `compiled.unknown_bounds`
+     (with optional override from `config.unknown_bounds_override`).
+   - Creates one `DomainEquationCondition` per physics residual (named
+     `physics_0`, `physics_1`, …) and one `TensorInputTensorTargetCondition`
+     per data sensor (named `data_<sensor>`).
+   - Instantiates a class derived from `(SpatialProblem)? + TimeDependentProblem +
+     InverseProblem`.
+   - Overrides the PINA-default unknown initialization (which is U(0, hi-lo)
+     + lo — wrong distribution unless lo == 0) with `compiled.unknown_inits`
+     (or `config.unknown_inits_override`).
+4. **Discretise physics domain**: `problem.discretise_domain(n=n_collocation,
+   mode="random", domains="all")` — random uniform samples.
+5. **Build the network**: MLP of `(input_dim, ..., output_dim)` with the
+   chosen activation, layer-norm, and Fourier-feature input encoding
+   (`fourier_features` cosine/sine projections, `fourier_sigma` width).
+6. **Pre-flight check** (`check_wellposedness(problem, network, compiled)`):
+   - Warns on overly-wide bounds (more than 20× truth implies the midpoint
+     init is hopelessly far).
+   - Sanity-checks the residual evaluates to a finite tensor.
+   - Sanity-checks sensors have data in the dict.
+   - (Skippable via `config.skip_preflight`.)
+7. **Build the weighting**: `ScalarWeighting`, `SAPinnWeighting`, or
+   `LRAWeighting` with per-condition initial weights set from
+   `lam_data_init` / `lam_physics_init`.
+8. **Instantiate the solver**:
+   - `CausalLabeledDataPINN` if `solver_type="causal"` (passes `eps` —
+     defaults to `1.0`, not PINA's collapse-prone `100`).
+   - `LabeledDataPINN` otherwise.
+   - `LBFGSInversePINN` if a post-Adam L-BFGS phase is requested
+     (`lbfgs_iters > 0`); this subclass merges network + unknown param
+     groups so `torch.optim.LBFGS` (which asserts a single param group)
+     accepts the inverse problem.
+9. **Engine-level attributes** stashed on the solver (PINA's `__init__`
+   doesn't pass through extras):
+   - `_engine_param_lr_scale` (separate LR multiplier for unknowns).
+   - `_engine_unknown_l2_prior` (Tikhonov weight).
+   - `_engine_unknown_l2_anchors` (per-unknown anchors).
+   - `_compiled_system`, `_engine_data`, `_engine_weighting` (for diagnostics).
+10. **Wire callbacks**:
+    - `UnknownsDumper` (always).
+    - `UnknownsParamLRScheduler` if (`param_lr_min_scale<1.0` or
+      `param_lr_trigger_below` set) and not `adaptive_unknowns_lr`.
+    - `AdaptiveUnknownsController` if `adaptive_unknowns_lr=True`.
+    - `CausalEpsAnnealer` if `solver_type="causal"` and
+      `causal_eps_anneal=True`.
+    - User-supplied callbacks last.
+11. **PINA Trainer.fit(solver)** runs Adam for `adam_epochs` epochs;
+    optionally L-BFGS for `lbfgs_iters` after.
+12. **Read final unknowns** from `problem.unknown_parameters`.
+13. **Compose `TrainResult`** with point estimates, final loss, compiled
+    system, network, problem, weighting, config, and the run id.
+
+---
+
+## The mathematics
+
+### Inverse problem formulation
+
+Given a system of PDEs/ODEs in state `u(x, t)` with unknown parameters `θ`:
+
+```
+F[u, ∇u, ∇²u, …; θ] = 0       (governing physics)
+B[u]|∂Ω           = 0          (boundary conditions)
+I[u]|t=0          = u₀         (initial conditions)
+y_k = h_k(u(x_k, t_k)) + ε_k   (sensor k, noise ε_k)
+```
+
+Find `θ` (and a network approximation `u_NN ≈ u`) that minimizes the
+composite PINN loss:
+
+```
+ℒ(θ, NN) = λ_phys · 𝔼_(x,t)∈Ω [ ||F[u_NN; θ](x,t)||² ]              (physics)
+         + Σ_k λ_data,k · 𝔼_data [ ||h_k(u_NN(x_k, t_k)) − y_k||² ]   (data)
+         +       λ_L2  · Σ_θ (θ − θ_anchor)²                          (Tikhonov)
+```
+
+`u_NN` is a multi-layer perceptron with Fourier-feature input encoding;
+`∇u_NN`, `∇²u_NN` come from `torch.autograd`.
+
+### Loss decomposition (per PINA)
+
+PINA represents each loss term as a `Condition`:
+
+- `DomainEquationCondition` for physics (`physics_i`): the residual `F`
+  is evaluated at `n_collocation` random points in the domain.
+- `TensorInputTensorTargetCondition` for sensors (`data_<sensor>`):
+  `||u_NN(x_data, t_data) − y_data||²` is computed exactly at the data
+  points.
+
+The weighting (`ScalarWeighting` / `SAPinnWeighting` / `LRAWeighting`)
+aggregates condition losses to the scalar that backprops.
+
+### Network: MLP + Fourier features
+
+The network input `(x, t)` is first lifted by random Fourier features:
+
+```
+φ(x, t) = [sin(B · [x, t]), cos(B · [x, t])]
+B ∈ ℝ^(F × d_input),  B_ij ~ 𝒩(0, σ²)
+```
+
+where `F = fourier_features` and `σ = fourier_sigma`. The lifted vector
+`φ ∈ ℝ^(2F)` goes through `depth` linear layers of width `width` with a
+chosen activation (`tanh`, `sintanh = (sin + tanh)/2`, `swish`, …) and
+optional layer-norm.
+
+**Why this matters for PDEs**: PINNs without Fourier features have severe
+*spectral bias* (smooth network output → `u_ss ≈ 0` for the wave equation
+→ ∂L/∂E ≈ 0 → unknown never updates). Mandatory for Cosserat; helpful
+elsewhere.
+
+### Optimizer + LR scheduling
+
+- **Adam** for `adam_epochs` (default optimizer; per-parameter learning
+  rates from gradient-magnitude moving averages).
+- **PINA wraps the optimizer in `ConstantLR(factor=1/3, total_iters=5)`** —
+  a 5-epoch warmup that runs the LR at ⅓ of base for epochs 0–4, then full
+  base from epoch 5. **Load-bearing**: removing it (run #15) overshoots
+  the wave-eq inverse to the lower bound in 3 epochs because the unknown
+  moves too fast against a cold network.
+- **Separate param-group LR for unknowns**: `lr_unknown = lr × param_lr_scale`.
+  PINN inverse needs the unknowns to move faster than the network weights
+  to escape Adam's per-parameter normalization throttling. The right
+  `param_lr_scale` is problem-specific: Cosserat 500, Fossen 1.0, default
+  1.0. **Always use each template's own `default_config().param_lr_scale`**
+  — forcing a universal value (e.g. 500 for Fossen) blows up easy problems.
+- **Optional cosine taper** (legacy two-phase precision option):
+  ```
+  scale(epoch) = min_scale + (1 − min_scale) · ½ · (1 + cos(π · progress))
+  progress = (epoch − trigger_epoch) / taper_epochs   (or … / max_epochs if no trigger)
+  ```
+- **L-BFGS** optional refinement after Adam: second-order, line-search;
+  uses the engine's `LBFGSInversePINN` (merges param groups).
+
+### The adaptive controller — state machine + math
+
+A runtime callback that adapts `lr_unknown = base_lr × eff_mult` based on
+the observed *bounds-relative velocity* of each unknown and the loss
+trajectory. Three states.
+
+**Velocity signal**
+
+```
+v_i(t)        = θ_i(t) − θ_i(t−1)             (per-epoch velocity)
+rel_v_i(t)    = |v_i(t)| / (b_hi_i − b_lo_i)  (relative to bound width)
+max_rel_v(t)  = max_i rel_v_i(t)
+osc(t)        = 1  iff  sign(v_i(t)) ≠ sign(v_i(t−1))  for some i with non-trivial step
+```
+
+**Loss signals**
+
+```
+loss(t)        = train_loss               (total)
+data_loss(t)   = Σ_k data_<k>_loss        (per-condition data losses)
+diverging(t)   = loss(t) > prev_loss · 1.5
+data_worse(t)  = data_loss(t) > prev_data_loss · 1.1
+improving(t)   = loss(t) < best_loss · 0.999
+```
+
+**State machine** (silent during `warmup_epochs` so PINA's warmup runs):
+
+- **DESCEND** (default):
+  - If `osc ∨ max_rel_v > v_hi ∨ diverging ∨ data_worse`:
+    `base_mult ← base_mult · lr_down`   (brake; recoverable via probes)
+  - Else if `max_rel_v < v_lo`:
+    `stall ← stall + 1`. After `stall_patience` epochs → enter **PROBE**.
+  - Else: hold.
+  - Applied: `eff_mult = base_mult`.
+
+- **PROBE**: temporarily boost `eff_mult = base_mult × probe_boost` for
+  `probe_window` epochs. At window end, evaluate:
+  - `dropped = loss < probe_loss₀ · (1 − escape_eps)`
+  - `moved   = max_i |θ_i(t) − θ_i(probe_start)| / range_i > v_lo`
+  - If `dropped ∧ moved` → commit: `base_mult ← base_mult · probe_boost`,
+    back to DESCEND.
+  - Else → **CONVERGED**: `base_mult ← converged_mult`, optionally stop.
+  - If `diverging ∨ data_worse` mid-probe → abort: `base_mult ← base_mult ·
+    lr_down`, back to DESCEND.
+
+- **CONVERGED**: hold `eff_mult = converged_mult` (low LR, rest).
+
+**Cap**: `base_mult` clamped to `[min_mult, max_mult]` (defaults `0.02`,
+`4.0`). The cap is what prevents the probe-commit loop from running away
+exponentially on problems where the loss keeps dropping cosmetically (the
+network polishing the field after the unknown has reached truth).
+
+**The "moved AND dropped" gate is what distinguishes a *trap* from a *true
+optimum*:** at a real optimum the unknown's gradient vanishes so it won't
+move even under boosted LR (probe fails → CONVERGED); in a shallow basin
+the gradient is nonzero so it moves (probe succeeds → commit and keep
+going).
+
+### L2 prior on unknowns (Tikhonov regularization)
+
+Adds to the training loss:
+
+```
+ℒ_prior(θ) = λ · Σ_{i ∈ anchors} (θ_i − a_i)²
+```
+
+`λ = unknown_l2_prior` (default `0.0` = disabled). `a_i = unknown_l2_anchor[i]`
+(only the unknowns explicitly named in the dict get a prior; if the dict
+is `None`, the legacy "all unknowns anchored at bound midpoint" behavior
+fires). The term is added inside our `training_step` override; logged as
+`unknown_l2_prior`.
+
+**Use it for partial-identifiability**: when the data doesn't uniquely
+pin the unknowns, λ pulls the solution toward your prior belief `a`.
+Validated:
+
+- Fossen 1-DOF, λ=1, anchor=truth: X_u 13% → **0.78%**.
+- Fossen 3-DOF, λ=1, anchor=full truth: X_u 0.00%, Y_v 1.4%, N_r 0.01%.
+- Fossen 3-DOF, λ=0.5, anchor={Y_v: −30} only: Y_v 22% → **1.37%**, X_u and
+  N_r unaffected by the prior (3.4% each from the data signal alone).
+
+### Causal weighting (Wang 2022, arXiv:2203.07404)
+
+For temporal problems, naive PINN minimizes residuals at all times jointly
+— which lets the network learn an incoherent solution that satisfies
+average physics but violates causality (later-time errors influence
+earlier-time training). CausalPINN sorts collocation points by time into
+buckets and weights each bucket by
+
+```
+ω_i = exp(−ε · Σ_{k ≤ i} L_phys(t_k))
+loss_phys = Σ_i ω_i · L_phys(t_i)
+```
+
+so a bucket is only "active" (high ω) once earlier buckets are well-fit.
+`ε` controls how strict the cascade is.
+
+**The `eps=100` bug**: PINA's default `eps=100` collapses ω to ~0 by
+epoch 1 for any non-trivial residual, silently muting the physics term.
+The engine defaults `causal_eps=1.0` (or `1e-8` for the Cosserat wave
+equation where initial residuals are O(1e7)) and uses a bi-directional
+ε-annealer:
+
+```
+if max_bucket_loss < threshold:   ε ← min(ε · 10, ε_max)   # tighten
+elif ω_min < ω_min_threshold:     ε ← ε / 10               # loosen
+```
+
+### Iterative bound-tightening
+
+Wrapper: `iterative_train(system, data, base_config, n_iters, tighten_factor)`.
+At each iteration:
+
+```
+θ_k        = train(system, data, cfg_k).final_params
+range_k    = bounds_k.hi − bounds_k.lo
+range_{k+1} = max(range_k · tighten_factor, min_range)
+bounds_{k+1} = clip([θ_k − range_{k+1}/2,  θ_k + range_{k+1}/2],  outer_bounds)
+init_{k+1}  = θ_k
+```
+
+Each round starts inside a narrower bracket re-centered on the previous
+result, with that result as the initial value. Validated on pendulum:
+iter 1 (`bounds=(0, 1)`) `c=0.357` (19.1%) → iter 2 (`bounds=(0.157, 0.557)`)
+`c=0.301` (**0.43%**, 45× tighter) → iter 3 (`(0.221, 0.381)`) converged.
+
+**Caveat**: does *not* help partial-identifiability. If the first run
+deterministically lands at the wrong basin (e.g., Fossen `X_u=−8.4` vs
+truth `−10`), tightening around `−8.4` just rediscovers the wrong basin
+more reliably. For partial-id, use the L2 prior with an explicit anchor.
+
+### Loss balancers
+
+- **`"none"` (default)**: per-condition static weights from `lam_data_init`
+  and `lam_physics_init`. Wrapped as PINA's `ScalarWeighting`.
+- **`"sapinn"`** (Self-Adaptive PINN, McClenny–Braga 2020): learnable
+  per-collocation-point weights `λ_i(t)` that the optimizer pushes UP
+  where the residual is hard (adversarial balancing). Implemented as
+  `SAPinnWeighting` plugging into PINA's `WeightingInterface`.
+- **`"lra"`** (Learning Rate Annealing, Wang 2021): scales physics vs data
+  losses by the ratio of their gradient norms, computed periodically.
+  Implemented as `LRAWeighting`.
+
+### Synthetic data generators
+
+For each template, `data/synthetic.py` provides a forward simulator:
+
+- **Damped oscillator**: `solve_ivp` on `m·ẍ + c·ẋ + k·x = 0`.
+- **Lorenz**: `solve_ivp` on the 3-D chaotic system.
+- **Pendulum**: `solve_ivp` on `I·θ̈ + c·θ̇ + mgL·sin(θ) = 0`.
+- **Fossen surge**: `solve_ivp` on `m·u̇ = τ_u + X_u·u + X_uu·u²`.
+- **Fossen 3-DOF**: `solve_ivp` on the coupled (`u̇`, `v̇`, `ṙ`) system
+  with Coriolis terms `m22·v·r`, `m11·u·r`, `(m22 − m11)·u·v`.
+- **Cosserat rod (wave eq)**: explicit finite difference (central in space,
+  leapfrog in time, CFL-bounded `dt`) on `ρ·u_tt = E·u_ss` with
+  `u(0,t) = 0`, `u_s(L,t) = 0`, `u(s,0)` = Gaussian bump.
+- **Diffusion 1-D**: closed-form Gaussian solution to `u_t = D·u_xx`
+  spreading from a narrow IC.
+
+All add Gaussian noise; all are reproducible from seed.
+
+---
+
+## Templates inventory
+
+7 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
+
+| name | physics | unknowns | best result via engine |
+|---|---|---|---|
+| `damped_oscillator` | `m·ẍ + c·ẋ + k·x = 0` | c, k | **c 0.11%, k 0.01%** (adaptive) |
+| `lorenz` | Lorenz σ, ρ, β | σ, ρ, β | **all <0.05%** (adaptive) |
+| `pendulum` | `I·θ̈ + c·θ̇ + mgL·sin(θ) = 0` | c | **0.43%** (adaptive + iterative) |
+| `fossen_surge` | `m·u̇ + drag` | X_u, X_uu | 13% adaptive; **0.78%** + L2 prior (truth anchor) |
+| `fossen_3dof` | planar surge-sway-yaw + Coriolis | X_u, Y_v, N_r | adaptive 1.8/22/6.6%; **0/1.4/0%** + L2 prior (full truth) |
+| `diffusion_1d` | `u_t = D·u_xx` | D | **1.6%** (adaptive, latches) |
+| `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave) | E_unit | **4.5%** (hand-tuned two-phase, run #16); 8% (adaptive, cap-limited) |
+
+---
+
+## Public API surface
+
+### Core entry points
+
+```python
+from pinn_engine.dsl.templates import get_template
+from pinn_engine.core.trainer import TrainConfig, train, TrainResult
+from pinn_engine.core.iterative_train import iterative_train, IterativeResult
+from pinn_engine.core.adaptive_controller import AdaptiveUnknownsController
+from pinn_engine.core.unknowns_dumper import UnknownsDumper
+```
+
+### Minimal usage
+
+```python
+tpl = get_template("diffusion_1d")
+system = tpl.system()
+data, truth = tpl.synthetic_data(seed=0)
+cfg = tpl.default_config()
+cfg.adaptive_unknowns_lr = True
+result = train(system, data, cfg, callbacks=[AdaptiveUnknownsController()])
+print(result.final_params)
+```
+
+### Iterative refinement
+
+```python
+res = iterative_train(system, data, cfg, n_iters=3, tighten_factor=0.4,
+                      callbacks_factory=lambda: [AdaptiveUnknownsController()])
+print(res.final_params)
+```
+
+### L2 prior (partial-id)
+
+```python
+cfg.unknown_l2_prior = 0.5
+cfg.unknown_l2_anchor = {"Y_v": -30.0}    # only Y_v regularized
+```
+
+### Selected `TrainConfig` knobs
+
+| field | default | what |
+|---|---|---|
+| `depth`, `width`, `activation` | 4, 64, `"tanh"` | MLP geometry |
+| `fourier_features`, `fourier_sigma` | 0, 1.0 | Fourier-feature input encoding |
+| `lr`, `param_lr_scale` | 1e-3, 1.0 | base LR + multiplier on the unknowns' param group |
+| `adam_epochs`, `lbfgs_iters` | 2000, 0 | optimizer budgets |
+| `balancer` | `"none"` | `"none"`, `"sapinn"`, `"lra"` |
+| `lam_data_init`, `lam_physics_init` | 1.0, 1.0 | initial weights per condition class |
+| `solver_type` | `"pinn"` | `"pinn"` or `"causal"` (Wang 2022) |
+| `causal_eps`, `causal_eps_anneal` | 1.0, False | causal weighting + ε-annealer |
+| `t_range`, `spatial_ranges`, `n_collocation` | (0,1), None, 1000 | physics domain + sampling |
+| `param_lr_min_scale`, `param_lr_trigger_below`, `param_lr_taper_epochs` | 1.0, None, None | manual two-phase LR (precision option) |
+| `adaptive_unknowns_lr` | False | runtime LR controller |
+| `unknown_l2_prior`, `unknown_l2_anchor` | 0.0, None | Tikhonov |
+| `unknown_bounds_override`, `unknown_inits_override` | None, None | iterative refinement hooks |
+| `seed`, `deterministic` | 42, True | reproducibility |
+| `accelerator`, `devices` | `"auto"`, 1 | Lightning device |
+| `skip_preflight` | False | bypass identifiability check |
+
+### CLI
+
+```
+pinn-engine train <template> [options]
+pinn-engine search <template> --n-trials N --study NAME
+pinn-engine verify <manifest>
+pinn-engine dashboard
+```
+
+---
+
+## Known limitations + open issues
+
+1. **PINA data-condition logging at scale**: per-condition `data_<sensor>_loss`
+   keys are present in short runs but were `None` in some long Cosserat runs;
+   the data-loss brake therefore didn't fire in iter #5. Root cause not
+   fully traced (probably callback-order / multi-batch CSV-schema interaction);
+   the `max_mult=4` cap is the working safety until this is fixed.
+2. **Cosserat auto-tune ceiling at ~8%**: the adaptive controller is
+   cap-limited; the hand-tuned two-phase recipe still gets to 4.5%. Closing
+   this needs either a working data-loss brake or RAR adaptive collocation
+   (`docs/cosserat_causal_experiments.md` for the full R&D arc).
+3. **Bounds-clamp timing**: PINA clamps unknowns in `loss_data` (which runs
+   *after* `optimizer.step`), so an unknown can transiently leave its
+   bounds for one epoch before being clamped. Diffusion was observed at
+   D=−0.002 once. Cosmetic; recovery is automatic.
+4. **Wide-bound midpoint anchor**: the L2 prior with the default `None`
+   anchor (= bound midpoints) can pull unknowns *away* from truth when
+   the bounds are wide and asymmetric (Fossen 1-DOF's midpoint is farther
+   from truth than the baseline). Honest fix: pass an explicit anchor; the
+   feature shines with a real prior.
+5. **6-DOF AUV inverse not yet a template.** `fossen_3dof` is the largest
+   coupled-multi-unknown ODE in the engine; full 6-DOF marine vessel
+   (with added-mass coupling, multi-rate sensors, body↔NED frame) would
+   be the natural next step, drawing on the user's existing `auv_pinn`
+   project for what to model and what's identifiable.
