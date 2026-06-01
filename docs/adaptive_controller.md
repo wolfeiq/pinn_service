@@ -59,6 +59,36 @@ pin both. The controller correctly identifies "no probe can improve further"
 and latches; closing the gap needs tighter bounds or more sensors, not
 better control.
 
+## Companion feature: L2 prior on unknowns (Tikhonov regularization)
+
+`TrainConfig.unknown_l2_prior` (float, default 0.0) and
+`TrainConfig.unknown_l2_anchor` (optional `Dict[str, float]`) add a
+`λ · Σ (θ - anchor)²` term to the training loss. The anchor defaults to each
+unknown's bound midpoint (= PINA's init point); supply an explicit dict to
+override per-unknown.
+
+**When to use it:** partially-identifiable problems (Fossen-style: multiple
+unknowns with multiplicative coupling, where the data doesn't uniquely pin
+all of them). Without a prior, the optimizer picks an arbitrary point on the
+data-consistent manifold; with a prior, it picks the closest one to your
+anchor.
+
+**Validation on Fossen** (truth `(-10, -30)`, baseline rel_err 13–15%):
+
+| λ | anchor | X_u rel_err | X_uu rel_err |
+|---|---|---|---|
+| 0 | — | 13.06% | 15.30% |
+| 0.01 | midpoint | 11.92% | 16.40% |
+| 1.0 | midpoint *(default)* | 18.66% | 24.14% |
+| 1.0 | **truth** | **0.78%** | **6.69%** |
+| 0.5 | partial guess `(-8, -25)` | 15.43% | 4.82% |
+
+The midpoint default *worsens* Fossen because its bounds are very wide and
+asymmetric (X_u ∈ (−25, 0), midpoint −12.5; truth −10; the prior pulls the
+wrong direction). The feature shines when the user supplies a meaningful
+anchor — proven by the λ=1.0 anchor=truth run dropping X_u rel_err to 0.78%.
+Honest guidance: pass a real prior or leave λ at 0.
+
 ## Pitfall: do not force a universal `param_lr_scale`
 
 Cosserat's E_unit is O(1) but its physics residual gradient on E is tiny, so

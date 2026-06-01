@@ -30,6 +30,31 @@ from pina.loss import ScalarWeighting
 from pinn_engine.core.weightings import SAPinnWeighting, LRAWeighting
 
 
+def _unknown_l2_prior_term(solver) -> Optional[torch.Tensor]:
+    """Tikhonov regularizer on the unknown parameters: ``λ · Σ (θ - anchor)²``.
+
+    Pulls unknowns toward an anchor (default = bound midpoints, which is also
+    PINA's init) so that on partially-identifiable problems (Fossen-style,
+    where the data doesn't uniquely pin both unknowns) the solution doesn't
+    drift to an arbitrary corner of the feasible set. ``λ=0`` disables it.
+
+    Returns ``None`` if disabled or no unknowns; otherwise a scalar tensor.
+    """
+    lam = float(getattr(solver, "_engine_unknown_l2_prior", 0.0))
+    if lam <= 0.0:
+        return None
+    params = getattr(solver, "_params", None) or {}
+    if not params:
+        return None
+    anchors = getattr(solver, "_engine_unknown_l2_anchors", None) or {}
+    total = None
+    for name, p in params.items():
+        anchor = float(anchors.get(name, 0.0))
+        term = ((p - anchor) ** 2).sum()
+        total = term if total is None else total + term
+    return lam * total
+
+
 class CausalLabeledDataPINN(PinaCausalPINN):
     """CausalPINN variant of LabeledDataPINN.
 
@@ -45,6 +70,16 @@ class CausalLabeledDataPINN(PinaCausalPINN):
     """
 
     _engine_param_lr_scale: float = 1.0
+    _engine_unknown_l2_prior: float = 0.0
+    _engine_unknown_l2_anchors: dict = {}
+
+    def training_step(self, batch, **kwargs):
+        loss = super().training_step(batch, **kwargs)
+        prior = _unknown_l2_prior_term(self)
+        if prior is not None:
+            self.log("unknown_l2_prior", float(prior.detach()), on_step=False, on_epoch=True)
+            loss = loss + prior
+        return loss
 
     def loss_data(self, input, target):
         out = self.forward(input)
@@ -121,6 +156,16 @@ class LabeledDataPINN(PinaPINN):
     # The trainer sets this via attribute assignment after solver construction
     # since PINA's __init__ doesn't pass through extra kwargs.
     _engine_param_lr_scale: float = 1.0
+    _engine_unknown_l2_prior: float = 0.0
+    _engine_unknown_l2_anchors: dict = {}
+
+    def training_step(self, batch, **kwargs):
+        loss = super().training_step(batch, **kwargs)
+        prior = _unknown_l2_prior_term(self)
+        if prior is not None:
+            self.log("unknown_l2_prior", float(prior.detach()), on_step=False, on_epoch=True)
+            loss = loss + prior
+        return loss
 
     def loss_data(self, input, target):
         out = self.forward(input)
@@ -231,6 +276,15 @@ class TrainConfig(BaseModel):
     # the two-phase trigger/taper. Mutually exclusive with the manual two-phase
     # scheduler; when on, param_lr_scale is the controller's starting scale.
     adaptive_unknowns_lr: bool = False
+    # Tikhonov regularization on the unknowns: add ``λ · Σ (θ - anchor)²`` to
+    # the training loss. Anchors default to the bound midpoints (= PINA's init).
+    # Helps partially-identifiable inverse problems (Fossen-style) where the
+    # data doesn't uniquely pin the unknowns — pulls the solution toward a
+    # principled prior rather than letting it drift. ``λ=0`` disables.
+    unknown_l2_prior: float = Field(default=0.0, ge=0)
+    # Per-unknown anchor values for the L2 prior. ``None`` = use bound
+    # midpoints (PINA's default init). Otherwise a dict like ``{"E_unit": 1.0}``.
+    unknown_l2_anchor: Optional[Dict[str, float]] = None
     # Solver: "pinn" (vanilla) or "causal" (time-causal residual weighting).
     # CausalPINN is the standard fix for wave/chaotic-PDE inverse problems
     # (Wang 2022, arXiv:2203.07404).
@@ -400,6 +454,13 @@ def train(
     solver._engine_weighting = weighting
     # Apply the separate-LR-for-unknowns config option.
     solver._engine_param_lr_scale = float(config.param_lr_scale)
+    # L2 prior on unknowns (default no-op). Anchor defaults to bound midpoints.
+    solver._engine_unknown_l2_prior = float(config.unknown_l2_prior)
+    if config.unknown_l2_prior > 0.0:
+        anchors = dict(config.unknown_l2_anchor or {})
+        for name, (lo, hi) in (compiled.unknown_bounds or {}).items():
+            anchors.setdefault(name, 0.5 * (lo + hi))
+        solver._engine_unknown_l2_anchors = anchors
 
     # Attach the unknowns' LR scheduler (cosine and/or two-phase trigger).
     # ``needs_scheduler`` was computed above so we could also swap PINA's
