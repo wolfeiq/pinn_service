@@ -73,6 +73,8 @@ class AdaptiveUnknownsController(pl.Callback):
         max_mult: float = 4.0,
         converged_mult: float = 0.2,
         stop_on_converge: bool = False,
+        convergence_window: int = 20,
+        drift_floor: float = 5e-3,
     ):
         super().__init__()
         self.warmup_epochs = int(warmup_epochs)
@@ -95,6 +97,17 @@ class AdaptiveUnknownsController(pl.Callback):
         self.max_mult = float(max_mult)
         self.converged_mult = float(converged_mult)
         self.stop_on_converge = bool(stop_on_converge)
+        # Before latching converged on a failed probe, check that no unknown
+        # has accumulated meaningful drift over the last ``convergence_window``
+        # epochs. ``drift_floor`` is the per-unknown total |Δ|/range that
+        # still counts as "actively descending" — below this, the unknown
+        # really has settled. Above this, give it more time (back to DESCEND).
+        # Catches the failure mode where probe deltas (~10%) miss the longer-
+        # term productive drift on slow-converging coupled unknowns like
+        # fossen_3dof Y_v.
+        self.convergence_window = int(convergence_window)
+        self.drift_floor = float(drift_floor)
+        self._value_history: dict = {}   # name -> list of recent values
 
         self._group_idx: Optional[int] = None
         self._base_lr: Optional[float] = None
@@ -152,6 +165,7 @@ class AdaptiveUnknownsController(pl.Callback):
             self._ranges[name] = max(abs(hi - lo), 1e-9)
             self._prev[name] = float(p.detach().item())
             self._prev_v[name] = 0.0
+            self._value_history[name] = []
 
     # ------------------------------------------------------------------ control
     def on_train_epoch_start(self, trainer, pl_module):
@@ -174,6 +188,11 @@ class AdaptiveUnknownsController(pl.Callback):
                 osc = True
             self._prev[name] = cur
             self._prev_v[name] = v
+            # Maintain rolling window for the drift-guard check.
+            hist = self._value_history[name]
+            hist.append(cur)
+            if len(hist) > self.convergence_window:
+                del hist[: len(hist) - self.convergence_window]
         max_rel_v = max(rel_vs) if rel_vs else 0.0
 
         loss = self._read_loss(trainer)
@@ -243,13 +262,28 @@ class AdaptiveUnknownsController(pl.Callback):
                     self._state = "descend"
                     self._stall = 0
                 else:
-                    # More LR can't reduce the loss by moving the unknown →
-                    # genuine optimum.
-                    self._state = "converged"
-                    self.converged = True
-                    self._base_mult = self.converged_mult
-                    if self.stop_on_converge:
-                        trainer.should_stop = True
+                    # Probe was unproductive — but BEFORE latching converged,
+                    # check the long-window drift: if any unknown has moved more
+                    # than ``drift_floor`` (relative to its range) across the
+                    # last ``convergence_window`` epochs, the slow descent is
+                    # still real (probe just doesn't add anything). Stay in
+                    # DESCEND in that case; only latch when truly settled.
+                    still_drifting = False
+                    for name, hist in self._value_history.items():
+                        if len(hist) >= self.convergence_window:
+                            drift = abs(hist[-1] - hist[0]) / self._ranges[name]
+                            if drift > self.drift_floor:
+                                still_drifting = True
+                                break
+                    if still_drifting:
+                        self._state = "descend"
+                        self._stall = 0
+                    else:
+                        self._state = "converged"
+                        self.converged = True
+                        self._base_mult = self.converged_mult
+                        if self.stop_on_converge:
+                            trainer.should_stop = True
         else:  # converged
             eff_mult = self.converged_mult
 
