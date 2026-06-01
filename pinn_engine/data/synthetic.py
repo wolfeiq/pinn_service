@@ -246,6 +246,66 @@ def generate_fossen_surge(
     )
 
 
+# -------------------------------------------------------------- fossen 3-DOF (planar surge-sway-yaw)
+
+
+def generate_fossen_3dof(
+    X_u: float = -10.0,
+    Y_v: float = -30.0,
+    N_r: float = -5.0,
+    m11: float = 45.0,
+    m22: float = 60.0,
+    m33: float = 8.0,
+    tau_x: float = 10.0,
+    tau_y: float = 3.0,
+    tau_n: float = 1.0,
+    t_end: float = 10.0,
+    n_samples: int = 1000,
+    noise_std_uv: float = 0.02,
+    noise_std_r: float = 0.01,
+    seed: int = 0,
+):
+    """Forward-simulate Fossen 3-DOF planar dynamics (surge, sway, yaw).
+
+    ODE system (Fossen 2021 §6.5, simplified — no added-mass coupling):
+
+        m11·u̇ − m22·v·r − X_u·u = τ_x
+        m22·v̇ + m11·u·r − Y_v·v = τ_y
+        m33·ṙ + (m22−m11)·u·v − N_r·r = τ_n
+
+    Initial conditions ``(u, v, r) = (0, 0, 0)`` (vehicle at rest). With
+    constant body-frame thrust + side force + yaw moment, the vehicle
+    accelerates and the three channels reach a steady state coupled through
+    the Coriolis terms.
+
+    Returns ``(data, truth)`` with three sensors: ``u_meas``, ``v_meas``,
+    ``r_meas``.
+    """
+    rng = np.random.default_rng(seed)
+
+    def rhs(t, y):
+        u, v, r = y
+        du = (tau_x + m22 * v * r + X_u * u) / m11
+        dv = (tau_y - m11 * u * r + Y_v * v) / m22
+        dr = (tau_n - (m22 - m11) * u * v + N_r * r) / m33
+        return [du, dv, dr]
+
+    t = np.linspace(0.0, t_end, n_samples)
+    sol = solve_ivp(rhs, (0.0, t_end), [0.0, 0.0, 0.0], t_eval=t, rtol=1e-9, atol=1e-11)
+    u_c, v_c, r_c = sol.y[0], sol.y[1], sol.y[2]
+    u_obs = u_c + rng.normal(0.0, noise_std_uv, size=u_c.shape)
+    v_obs = v_c + rng.normal(0.0, noise_std_uv, size=v_c.shape)
+    r_obs = r_c + rng.normal(0.0, noise_std_r, size=r_c.shape)
+    return (
+        {
+            "u_meas": (t.astype(np.float32), u_obs.astype(np.float32)),
+            "v_meas": (t.astype(np.float32), v_obs.astype(np.float32)),
+            "r_meas": (t.astype(np.float32), r_obs.astype(np.float32)),
+        },
+        {"X_u": X_u, "Y_v": Y_v, "N_r": N_r},
+    )
+
+
 # -------------------------------------------------------------- 1d diffusion (placeholder)
 
 

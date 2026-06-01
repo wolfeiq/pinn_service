@@ -5,7 +5,7 @@ from pinn_engine.dsl.templates_lib import damped_oscillator, lorenz, diffusion_1
 from pinn_engine.dsl.templates import get_template
 
 
-@pytest.mark.parametrize("name", ["damped_oscillator", "lorenz", "diffusion_1d"])
+@pytest.mark.parametrize("name", ["damped_oscillator", "lorenz", "diffusion_1d", "fossen_3dof"])
 def test_template_system_and_data(name):
     tpl = get_template(name)
     sys = tpl.system()
