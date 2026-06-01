@@ -285,6 +285,11 @@ class TrainConfig(BaseModel):
     # Per-unknown anchor values for the L2 prior. ``None`` = use bound
     # midpoints (PINA's default init). Otherwise a dict like ``{"E_unit": 1.0}``.
     unknown_l2_anchor: Optional[Dict[str, float]] = None
+    # Per-run override of the compiled bounds and inits — populated by the
+    # iterative-refinement wrapper (``iterative_train``) so a follow-up run
+    # narrows the search range around the previous result and starts there.
+    unknown_bounds_override: Optional[Dict[str, Tuple[float, float]]] = None
+    unknown_inits_override: Optional[Dict[str, float]] = None
     # Solver: "pinn" (vanilla) or "causal" (time-causal residual weighting).
     # CausalPINN is the standard fix for wave/chaotic-PDE inverse problems
     # (Wang 2022, arXiv:2203.07404).
@@ -385,6 +390,8 @@ def train(
         compiled, data,
         t_range=config.t_range,
         spatial_ranges=config.spatial_ranges,
+        bounds_override=config.unknown_bounds_override,
+        inits_override=config.unknown_inits_override,
     )
     problem.discretise_domain(n=config.n_collocation, mode="random", domains="all")
 

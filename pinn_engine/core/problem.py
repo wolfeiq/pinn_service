@@ -35,6 +35,8 @@ def build_problem(
     data: Dict[str, Tuple[Any, Any]],
     t_range: Tuple[float, float],
     spatial_ranges: Dict[str, Tuple[float, float]] = None,
+    bounds_override: Dict[str, Tuple[float, float]] = None,
+    inits_override: Dict[str, float] = None,
 ) -> InverseProblem:
     """Construct a PINA problem instance from a compiled DSL system + data.
 
@@ -75,11 +77,16 @@ def build_problem(
         spatial_domain = None
         physics_domain = temporal_domain
 
+    # Allow per-unknown overrides (used by the iterative-bound-tightening loop:
+    # after a run converges, narrow the search range around the result and
+    # re-train for higher precision). Merges over the compiled defaults.
+    effective_bounds = dict(compiled.unknown_bounds)
+    if bounds_override:
+        for name, b in bounds_override.items():
+            if name in effective_bounds:
+                effective_bounds[name] = (float(b[0]), float(b[1]))
     unknown_parameter_domain = CartesianDomain(
-        {
-            name: [float(lo), float(hi)]
-            for name, (lo, hi) in compiled.unknown_bounds.items()
-        }
+        {name: [float(lo), float(hi)] for name, (lo, hi) in effective_bounds.items()}
     )
 
     conditions: Dict[str, Condition] = {}
@@ -122,7 +129,14 @@ def build_problem(
 
     # PINA initializes unknown_parameters with U(0, range_hi) + range_lo, which
     # gives the wrong distribution unless lo == 0. Override to the requested init.
-    for name, init in compiled.unknown_inits.items():
+    # ``inits_override`` (from iterative refinement) takes precedence over the
+    # compiled default — lets a follow-up run start from the previous result.
+    effective_inits = dict(compiled.unknown_inits)
+    if inits_override:
+        for name, v in inits_override.items():
+            if name in effective_inits:
+                effective_inits[name] = float(v)
+    for name, init in effective_inits.items():
         problem.unknown_parameters[name] = torch.nn.Parameter(
             torch.tensor([float(init)], requires_grad=True)
         )

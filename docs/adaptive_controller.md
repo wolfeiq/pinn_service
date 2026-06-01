@@ -89,6 +89,42 @@ wrong direction). The feature shines when the user supplies a meaningful
 anchor — proven by the λ=1.0 anchor=truth run dropping X_u rel_err to 0.78%.
 Honest guidance: pass a real prior or leave λ at 0.
 
+## Companion feature: iterative bound-tightening
+
+`pinn_engine.core.iterative_train.iterative_train(system, data, base_config,
+n_iters=3, tighten_factor=0.4)` wraps :func:`train` with a meta-loop: run →
+shrink bounds around the result → re-train from that point. Each iteration
+starts with a narrower search range and the previous result as init, so
+subsequent rounds converge faster and more precisely.
+
+**Validated on pendulum** (truth `c=0.3`):
+
+| iter | bounds | result | rel_err |
+|---|---|---|---|
+| 1 | `(0.0, 1.0)` | 0.357 | **19.1%** |
+| 2 | `(0.157, 0.557)` | 0.301 | **0.43%** |
+| 3 | `(0.221, 0.381)` | 0.301 | 0.46% (converged) |
+
+Iter 1 → iter 2 = **45× tighter** rel_err. Iter 3 stabilizes at the minimum
+the bracket allows.
+
+**When NOT to use it:** doesn't help partial-identifiability. On Fossen, all
+3 iterations stay near −8.3 to −8.7 (truth −10) — the optimizer
+deterministically falls into the same wrong basin, and tightening bounds
+around it just rediscovers that basin more reliably. For partial-id, use the
+L2 prior with a meaningful anchor.
+
+## When to reach for which feature
+
+- **Convergence too slow / unknown frozen / wave-eq basin:** adaptive
+  controller (`adaptive_unknowns_lr=True`).
+- **First-pass converged but want sharper precision:** wrap with
+  `iterative_train`.
+- **Partial-identifiability (data doesn't uniquely pin all unknowns):** L2
+  prior with explicit `unknown_l2_anchor` reflecting prior knowledge.
+- They compose freely — controller + L2 prior + iterative loop is the full
+  toolkit for the inverse problem at hand.
+
 ## Pitfall: do not force a universal `param_lr_scale`
 
 Cosserat's E_unit is O(1) but its physics residual gradient on E is tiny, so
