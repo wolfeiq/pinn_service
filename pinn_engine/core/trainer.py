@@ -34,7 +34,7 @@ def _unknown_l2_prior_term(solver) -> Optional[torch.Tensor]:
     """Tikhonov regularizer on the unknown parameters: ``λ · Σ (θ - anchor)²``.
 
     Pulls unknowns toward an anchor (default = bound midpoints, which is also
-    PINA's init) so that on partially-identifiable problems (Fossen-style,
+    PINA's init) so that on partially-identifiable problems (coupled-drag-style,
     where the data doesn't uniquely pin both unknowns) the solution doesn't
     drift to an arbitrary corner of the feasible set. ``λ=0`` disables it.
 
@@ -52,7 +52,7 @@ def _unknown_l2_prior_term(solver) -> Optional[torch.Tensor]:
         # Only regularize unknowns the user (or auto-fill) put in the anchors
         # dict. If a name is absent, that unknown has no prior — silently
         # skipping it avoids pulling unrelated unknowns toward bad midpoints
-        # when the user supplies a partial anchor (e.g. ``{"Y_v": -30}``).
+        # when the user supplies a partial anchor (e.g. ``{"c_y": -30}``).
         if name not in anchors:
             continue
         anchor = float(anchors[name])
@@ -284,7 +284,7 @@ class TrainConfig(BaseModel):
     adaptive_unknowns_lr: bool = False
     # Tikhonov regularization on the unknowns: add ``λ · Σ (θ - anchor)²`` to
     # the training loss. Anchors default to the bound midpoints (= PINA's init).
-    # Helps partially-identifiable inverse problems (Fossen-style) where the
+    # Helps partially-identifiable inverse problems (coupled-drag-style) where the
     # data doesn't uniquely pin the unknowns — pulls the solution toward a
     # principled prior rather than letting it drift. ``λ=0`` disables.
     unknown_l2_prior: float = Field(default=0.0, ge=0)
@@ -472,7 +472,7 @@ def train(
     #     (back-compat with the "uniform prior" default).
     #   - cfg.unknown_l2_anchor is a dict → apply ONLY to the listed unknowns;
     #     unspecified ones get no prior (no midpoint auto-fill). This avoids
-    #     "I just want a prior on Y_v" silently wrecking X_u and N_r by
+    #     "I just want a prior on c_y" silently wrecking c_x and c_n by
     #     pulling them toward unrelated midpoints.
     solver._engine_unknown_l2_prior = float(config.unknown_l2_prior)
     if config.unknown_l2_prior > 0.0:

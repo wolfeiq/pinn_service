@@ -13,7 +13,7 @@ to the right region. ``iterative_train`` wraps :func:`train` to address this:
 
 Each iteration starts where the last finished, with a narrower search range,
 so subsequent iterations converge faster and more precisely. Useful for
-partial-identifiability problems (Fossen-style) and for sharpening Cosserat
+partial-identifiability problems (coupled-drag-style) and for sharpening Cosserat
 beyond the controller's cap-limited equilibrium.
 """
 from __future__ import annotations

@@ -208,25 +208,25 @@ def generate_pendulum(
     )
 
 
-# -------------------------------------------------------------- fossen surge (AUV 1-DOF)
+# -------------------------------------------------------------- nonlinear drag 1-DOF
 
 
-def generate_fossen_surge(
-    X_u: float = -10.0,
-    X_uu: float = -30.0,
+def generate_nonlinear_drag_1d(
+    c_lin: float = -10.0,
+    c_quad: float = -30.0,
     m_eff: float = 45.0,
-    tau_u: float = 10.0,
+    tau: float = 10.0,
     t_end: float = 10.0,
     n_samples: int = 1000,
     noise_std: float = 0.02,
     seed: int = 0,
 ):
-    """Forward-simulate Fossen 1-DOF surge dynamics.
+    """Forward-simulate 1-DOF nonlinear-drag dynamics.
 
-    ODE: ``m_eff · u̇ − X_u · u − X_uu · u² − τ_u = 0`` with ``u(0) = 0``.
-    With Fossen-convention negative drag coefficients, the vehicle
-    accelerates from rest and asymptotes to a steady-state forward
-    velocity ``u_ss`` set by ``τ_u + X_u · u + X_uu · u² = 0``.
+    ODE: ``m_eff · u̇ − c_lin · u − c_quad · u² − τ = 0`` with ``u(0) = 0``.
+    With negative drag coefficients the body accelerates from rest and
+    asymptotes to a steady-state velocity ``u_ss`` set by
+    ``τ + c_lin · u_ss + c_quad · u_ss² = 0``.
 
     Returns ``(data, truth)`` where data has one sensor ``u_meas``.
     """
@@ -234,7 +234,7 @@ def generate_fossen_surge(
 
     def rhs(t, y):
         (u,) = y
-        return [(tau_u + X_u * u + X_uu * u * u) / m_eff]
+        return [(tau + c_lin * u + c_quad * u * u) / m_eff]
 
     t = np.linspace(0.0, t_end, n_samples)
     sol = solve_ivp(rhs, (0.0, t_end), [0.0], t_eval=t, rtol=1e-9, atol=1e-11)
@@ -242,17 +242,17 @@ def generate_fossen_surge(
     u_noisy = u_clean + rng.normal(0.0, noise_std, size=u_clean.shape)
     return (
         {"u_meas": (t.astype(np.float32), u_noisy.astype(np.float32))},
-        {"X_u": X_u, "X_uu": X_uu},
+        {"c_lin": c_lin, "c_quad": c_quad},
     )
 
 
-# -------------------------------------------------------------- fossen 3-DOF (planar surge-sway-yaw)
+# -------------------------------------------------------------- coupled drag 3-DOF (planar)
 
 
-def generate_fossen_3dof(
-    X_u: float = -10.0,
-    Y_v: float = -30.0,
-    N_r: float = -5.0,
+def generate_coupled_drag_3d(
+    c_x: float = -10.0,
+    c_y: float = -30.0,
+    c_n: float = -5.0,
     m11: float = 45.0,
     m22: float = 60.0,
     m33: float = 8.0,
@@ -265,18 +265,18 @@ def generate_fossen_3dof(
     noise_std_r: float = 0.01,
     seed: int = 0,
 ):
-    """Forward-simulate Fossen 3-DOF planar dynamics (surge, sway, yaw).
+    """Forward-simulate 3-DOF planar coupled-drag dynamics.
 
-    ODE system (Fossen 2021 §6.5, simplified — no added-mass coupling):
+    ODE system (rigid-body planar motion with per-axis linear drag, no
+    added-mass coupling):
 
-        m11·u̇ − m22·v·r − X_u·u = τ_x
-        m22·v̇ + m11·u·r − Y_v·v = τ_y
-        m33·ṙ + (m22−m11)·u·v − N_r·r = τ_n
+        m11·u̇ − m22·v·r − c_x·u = τ_x
+        m22·v̇ + m11·u·r − c_y·v = τ_y
+        m33·ṙ + (m22−m11)·u·v − c_n·r = τ_n
 
-    Initial conditions ``(u, v, r) = (0, 0, 0)`` (vehicle at rest). With
-    constant body-frame thrust + side force + yaw moment, the vehicle
-    accelerates and the three channels reach a steady state coupled through
-    the Coriolis terms.
+    Initial conditions ``(u, v, r) = (0, 0, 0)`` (body at rest). With
+    constant body-frame forces + moment, the three channels accelerate
+    and reach a steady state coupled through the Coriolis-type terms.
 
     Returns ``(data, truth)`` with three sensors: ``u_meas``, ``v_meas``,
     ``r_meas``.
@@ -285,9 +285,9 @@ def generate_fossen_3dof(
 
     def rhs(t, y):
         u, v, r = y
-        du = (tau_x + m22 * v * r + X_u * u) / m11
-        dv = (tau_y - m11 * u * r + Y_v * v) / m22
-        dr = (tau_n - (m22 - m11) * u * v + N_r * r) / m33
+        du = (tau_x + m22 * v * r + c_x * u) / m11
+        dv = (tau_y - m11 * u * r + c_y * v) / m22
+        dr = (tau_n - (m22 - m11) * u * v + c_n * r) / m33
         return [du, dv, dr]
 
     t = np.linspace(0.0, t_end, n_samples)
@@ -302,7 +302,7 @@ def generate_fossen_3dof(
             "v_meas": (t.astype(np.float32), v_obs.astype(np.float32)),
             "r_meas": (t.astype(np.float32), r_obs.astype(np.float32)),
         },
-        {"X_u": X_u, "Y_v": Y_v, "N_r": N_r},
+        {"c_x": c_x, "c_y": c_y, "c_n": c_n},
     )
 
 

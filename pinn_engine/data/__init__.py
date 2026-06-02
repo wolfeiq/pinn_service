@@ -3,7 +3,8 @@ from pinn_engine.data.synthetic import (
     generate_damped_oscillator,
     generate_lorenz,
     generate_diffusion_1d,
-    generate_fossen_surge,
+    generate_nonlinear_drag_1d,
+    generate_coupled_drag_3d,
     generate_pendulum,
     generate_cosserat_rod,
 )
@@ -11,5 +12,6 @@ from pinn_engine.data.synthetic import (
 __all__ = [
     "load_data", "validate_against_system",
     "generate_damped_oscillator", "generate_lorenz", "generate_diffusion_1d",
-    "generate_fossen_surge", "generate_pendulum", "generate_cosserat_rod",
+    "generate_nonlinear_drag_1d", "generate_coupled_drag_3d",
+    "generate_pendulum", "generate_cosserat_rod",
 ]

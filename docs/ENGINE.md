@@ -59,7 +59,7 @@ Reverse chronological. Commit SHAs in parens. Major moments **bold**.
   DESCEND. Scaffolded; thresholds need empirical tuning.
 - (**fbe4e23** 2026-06-02) **CRLB preflight diagnostic** added
   (`pinn_engine.diagnostics.crlb.compute_template_crlb`). Reveals 25× CRLB
-  headroom on diffusion, 36× on Fossen 3-DOF Y_v, 70× on Cosserat — the
+  headroom on diffusion, 36× on 3-DOF coupled-drag c_y, 70× on Cosserat — the
   engine's empirical results are far from data-theoretic limits on
   several templates.
 - (**b568eca** 2026-06-02) `docs/ENGINE.md` (this file) added — single-file
@@ -70,12 +70,12 @@ Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 - (**f8a26be** 2026-06-02) L2 prior bug fix: partial anchor now only
   regularizes listed unknowns; previously auto-filled midpoints could
   silently pull other unknowns wrong.
-- (**ca06504** 2026-06-01) **`fossen_3dof` template added** (7th template):
-  coupled surge-sway-yaw drag inverse, first multi-unknown coupled ODE.
+- (**ca06504** 2026-06-01) **`coupled_drag_3d` template added** (7th template):
+  coupled three-axis planar drag inverse, first multi-unknown coupled ODE.
 - (**4eefc14** 2026-06-01) `iterative_train` meta-loop: shrinks bounds
   around each result and re-trains. Pendulum 19% → 0.43% in two iterations.
-- (**0da13a7** 2026-06-01) **L2 (Tikhonov) prior on unknowns** added. Fossen
-  X_u 13% → 0.78% with truth anchor.
+- (**0da13a7** 2026-06-01) **L2 (Tikhonov) prior on unknowns** added. the coupled-drag
+  c_lin 13% → 0.78% with truth anchor.
 - (**2e2b695** 2026-05-31) Adaptive controller validated across all 6
   templates; "use template's own `param_lr_scale`" guidance written.
 - (**82999e2** 2026-05-31) **Cosserat basin auto-tune cracked**: adaptive
@@ -118,10 +118,10 @@ Reverse chronological. Commit SHAs in parens. Major moments **bold**.
   Cosserat rod template.
 - (`e5f2e54` 2026-05-22) Diagnostic callbacks: PDE-aware input construction.
 - (`321c318` / `0f80c63` 2026-05-21) **Phase 5: Streamlit dashboard**.
-- (`f7eece8` / `b0d4e0d` / `c6c9271` / `36efa9f` 2026-05-20) Fossen 12-trial
+- (`f7eece8` / `b0d4e0d` / `c6c9271` / `36efa9f` 2026-05-20) 12-trial
   AutoML, EKF baseline, ensemble UQ + pendulum + ROS 2 bag ingestion, ONNX/
   TorchScript export.
-- (`31a703e` 2026-05-18) Phase 3: Fossen 1-DOF surge inverse template.
+- (`31a703e` 2026-05-18) Phase 3: 1-DOF nonlinear-drag surge inverse template.
 
 ### Phase 1+2 foundation (Apr 21 – May 17, 2026)
 
@@ -228,7 +228,7 @@ What the engine handles **today** (2026-06-02):
 **Problem classes:**
 
 - **ODE inverse** with 1+ unknowns, optionally coupled (Lorenz 3 unknowns,
-  Fossen 3-DOF 3 coupled drag coefficients).
+  3-DOF coupled-drag 3 coupled drag coefficients).
 - **PDE inverse** with 1 spatial + 1 temporal variable; data conditions,
   physics conditions, IC and BC as pseudo-sensors.
 - **Partial-identifiability problems** (data doesn't uniquely pin all
@@ -290,7 +290,7 @@ What the engine handles **today** (2026-06-02):
 - `pinn-engine train|search|verify|dashboard|...` CLI (Typer).
 - Streamlit dashboard over manifests + Optuna studies (live training
   progress + equation editor).
-- ROS 2 bag ingestion for real AUV data.
+- ROS 2 bag ingestion for real vehicle data.
 
 **Outputs:**
 
@@ -440,9 +440,9 @@ elsewhere.
 - **Separate param-group LR for unknowns**: `lr_unknown = lr × param_lr_scale`.
   PINN inverse needs the unknowns to move faster than the network weights
   to escape Adam's per-parameter normalization throttling. The right
-  `param_lr_scale` is problem-specific: Cosserat 500, Fossen 1.0, default
+  `param_lr_scale` is problem-specific: Cosserat 500, the coupled-drag 1.0, default
   1.0. **Always use each template's own `default_config().param_lr_scale`**
-  — forcing a universal value (e.g. 500 for Fossen) blows up easy problems.
+  — forcing a universal value (e.g. 500 for the coupled-drag) blows up easy problems.
 - **Optional cosine taper** (legacy two-phase precision option):
   ```
   scale(epoch) = min_scale + (1 − min_scale) · ½ · (1 + cos(π · progress))
@@ -499,7 +499,7 @@ improving(t)   = loss(t) < best_loss · 0.999
 - **CONVERGED**: hold `eff_mult = converged_mult` (low LR, rest).
 
 **Drift-guard against premature CONVERGED latching** (added 2026-06-02 after
-the CRLB diagnostic revealed Fossen 3-DOF Y_v has 36× headroom while the
+the CRLB diagnostic revealed 3-DOF coupled-drag c_y has 36× headroom while the
 controller was prematurely declaring convergence on it):
 
 Before latching CONVERGED on a failed probe, check whether *any* unknown
@@ -517,7 +517,7 @@ for name in unknowns:
 
 Default `convergence_window = 20`, `drift_floor = 5e-3`. Per the
 `docs/ENGINE.md` known-issues section, these defaults are conservative
-and miss the ultra-slow drift seen on Fossen 3-DOF Y_v (~0.001%/epoch);
+and miss the ultra-slow drift seen on 3-DOF coupled-drag c_y (~0.001%/epoch);
 tuning is open work.
 
 **Cap**: `base_mult` clamped to `[min_mult, max_mult]` (defaults `0.02`,
@@ -549,10 +549,10 @@ fires). The term is added inside our `training_step` override; logged as
 pin the unknowns, λ pulls the solution toward your prior belief `a`.
 Validated:
 
-- Fossen 1-DOF, λ=1, anchor=truth: X_u 13% → **0.78%**.
-- Fossen 3-DOF, λ=1, anchor=full truth: X_u 0.00%, Y_v 1.4%, N_r 0.01%.
-- Fossen 3-DOF, λ=0.5, anchor={Y_v: −30} only: Y_v 22% → **1.37%**, X_u and
-  N_r unaffected by the prior (3.4% each from the data signal alone).
+- 1-DOF nonlinear-drag, λ=1, anchor=truth: c_lin 13% → **0.78%**.
+- 3-DOF coupled-drag, λ=1, anchor=full truth: c_lin 0.00%, c_y 1.4%, c_n 0.01%.
+- 3-DOF coupled-drag, λ=0.5, anchor={c_y: −30} only: c_y 22% → **1.37%**, c_lin and
+  c_n unaffected by the prior (3.4% each from the data signal alone).
 
 ### Causal weighting (Wang 2022, arXiv:2203.07404)
 
@@ -600,7 +600,7 @@ iter 1 (`bounds=(0, 1)`) `c=0.357` (19.1%) → iter 2 (`bounds=(0.157, 0.557)`)
 `c=0.301` (**0.43%**, 45× tighter) → iter 3 (`(0.221, 0.381)`) converged.
 
 **Caveat**: does *not* help partial-identifiability. If the first run
-deterministically lands at the wrong basin (e.g., Fossen `X_u=−8.4` vs
+deterministically lands at the wrong basin (e.g., the coupled-drag `c_lin=−8.4` vs
 truth `−10`), tightening around `−8.4` just rediscovers the wrong basin
 more reliably. For partial-id, use the L2 prior with an explicit anchor.
 
@@ -618,7 +618,7 @@ S[k, i]  =  ∂y_k / ∂θ_i                         (sensitivity matrix)
 
 The diagonal of `F⁻¹` gives the best-achievable per-parameter variance;
 `SE_i = √diag(F⁻¹)_i`. Importantly, **this bound applies to any estimator**
-— PINN, EKF, Kalman smoother, hand-tuned recipe. If CRLB SE on `X_u` is 5%,
+— PINN, EKF, Kalman smoother, hand-tuned recipe. If CRLB SE on `c_lin` is 5%,
 no algorithm will do better with that data + noise.
 
 **Implementation** (`pinn_engine/diagnostics/crlb.py`):
@@ -649,8 +649,8 @@ data-theoretic limit:
 | `lorenz` | σ, ρ, β | <0.005% | <0.05% | ~1× | at CRLB floor |
 | `pendulum` | c | 0.14% | 0.43% | 3× | small headroom |
 | `diffusion_1d` | D | **0.063%** | 1.57% (50ep) / 0.24% (200ep) | 4-25× | **epoch-starved** |
-| `fossen_surge` | X_u, X_uu | 5.5% / 4.6% | 13% / 15% | 2-3× | near floor (partial-id real) |
-| `fossen_3dof` | X_u, **Y_v**, N_r | 0.19% / **0.62%** / 0.12% | 1.8% / 14% / 6.6% | up to **36×** | **Y_v is *training*-limited, not partial-id** |
+| `nonlinear_drag_1d` | c_lin, c_quad | 5.5% / 4.6% | 13% / 15% | 2-3× | near floor (partial-id real) |
+| `coupled_drag_3d` | c_lin, **c_y**, c_n | 0.19% / **0.62%** / 0.12% | 1.8% / 14% / 6.6% | up to **36×** | **c_y is *training*-limited, not partial-id** |
 | `cosserat_rod` | E_unit | **0.11%** | 4.5% hand-tuned, 8% adaptive | **40-70×** | **huge training-limited headroom** |
 
 The Cosserat finding is the most important — both the hand-tuned 4.5% and
@@ -677,8 +677,8 @@ For each template, `data/synthetic.py` provides a forward simulator:
 - **Damped oscillator**: `solve_ivp` on `m·ẍ + c·ẋ + k·x = 0`.
 - **Lorenz**: `solve_ivp` on the 3-D chaotic system.
 - **Pendulum**: `solve_ivp` on `I·θ̈ + c·θ̇ + mgL·sin(θ) = 0`.
-- **Fossen surge**: `solve_ivp` on `m·u̇ = τ_u + X_u·u + X_uu·u²`.
-- **Fossen 3-DOF**: `solve_ivp` on the coupled (`u̇`, `v̇`, `ṙ`) system
+- **1-DOF nonlinear-drag**: `solve_ivp` on `m·u̇ = τ_u + c_lin·u + c_quad·u²`.
+- **3-DOF coupled-drag**: `solve_ivp` on the coupled (`u̇`, `v̇`, `ṙ`) system
   with Coriolis terms `m22·v·r`, `m11·u·r`, `(m22 − m11)·u·v`.
 - **Cosserat rod (wave eq)**: explicit finite difference (central in space,
   leapfrog in time, CFL-bounded `dt`) on `ρ·u_tt = E·u_ss` with
@@ -699,8 +699,8 @@ All add Gaussian noise; all are reproducible from seed.
 | `damped_oscillator` | `m·ẍ + c·ẋ + k·x = 0` | c, k | **c 0.11%, k 0.01%** (adaptive) |
 | `lorenz` | Lorenz σ, ρ, β | σ, ρ, β | **all <0.05%** (adaptive) |
 | `pendulum` | `I·θ̈ + c·θ̇ + mgL·sin(θ) = 0` | c | **0.43%** (adaptive + iterative) |
-| `fossen_surge` | `m·u̇ + drag` | X_u, X_uu | 13% adaptive; **0.78%** + L2 prior (truth anchor) |
-| `fossen_3dof` | planar surge-sway-yaw + Coriolis | X_u, Y_v, N_r | adaptive 1.8/22/6.6%; **0/1.4/0%** + L2 prior (full truth) |
+| `nonlinear_drag_1d` | `m·u̇ + drag` | c_lin, c_quad | 13% adaptive; **0.78%** + L2 prior (truth anchor) |
+| `coupled_drag_3d` | planar three-axis planar + Coriolis | c_lin, c_y, c_n | adaptive 1.8/22/6.6%; **0/1.4/0%** + L2 prior (full truth) |
 | `diffusion_1d` | `u_t = D·u_xx` | D | **1.6%** at 50 ep / **0.24%** at 200 ep / **0.10%** at 200 ep + L2 prior anchor=truth (= CRLB floor 0.063%) |
 | `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave) | E_unit | **4.5%** (hand-tuned two-phase, run #16); 8% (adaptive, cap-limited) |
 
@@ -755,7 +755,7 @@ print(res.final_params)
 
 ```python
 cfg.unknown_l2_prior = 0.5
-cfg.unknown_l2_anchor = {"Y_v": -30.0}    # only Y_v regularized
+cfg.unknown_l2_anchor = {"c_y": -30.0}    # only c_y regularized
 ```
 
 ### Selected `TrainConfig` knobs
@@ -809,24 +809,23 @@ pinn-engine dashboard
    D=−0.002 once. Cosmetic; recovery is automatic.
 4. **Wide-bound midpoint anchor**: the L2 prior with the default `None`
    anchor (= bound midpoints) can pull unknowns *away* from truth when
-   the bounds are wide and asymmetric (Fossen 1-DOF's midpoint is farther
+   the bounds are wide and asymmetric (1-DOF nonlinear-drag's midpoint is farther
    from truth than the baseline). Honest fix: pass an explicit anchor; the
    feature shines with a real prior.
-5. **6-DOF AUV inverse not yet a template.** `fossen_3dof` is the largest
-   coupled-multi-unknown ODE in the engine; full 6-DOF marine vessel
-   (with added-mass coupling, multi-rate sensors, body↔NED frame) would
-   be the natural next step, drawing on the user's existing `auv_pinn`
-   project for what to model and what's identifiable.
+5. **6-DOF rigid-body inverse not yet a template.** `coupled_drag_3d` is the
+   largest coupled-multi-unknown ODE in the engine; full 6-DOF rigid body
+   (with added-mass coupling, multi-rate sensors, body↔world-frame
+   rotations) would be the natural next step.
 6. **Experiment scripts have been epoch-starved.** Several R&D runs set
    `adam_epochs=50` for fast iteration; this is far below the template's
    intended production budget (e.g. `diffusion_1d` defaults to 10000,
    `cosserat_rod` to 10000). Diffusion at 200 ep is **7× tighter** than at
-   50 ep (1.71% → 0.24%); Fossen 3-DOF Y_v at 8000 ep is 1.6× tighter
+   50 ep (1.71% → 0.24%); 3-DOF coupled-drag c_y at 8000 ep is 1.6× tighter
    than at 2000 ep. The empirical baselines in this doc reflect a mix of
    debug and production budgets — check `cfg.adam_epochs` before drawing
    "the engine can't do better" conclusions.
 7. **Adaptive controller's CONVERGED latch fires too eagerly on slow
    coupled descents.** Drift-guard scaffolded (commit `e6a65d0`) but its
    `convergence_window=20` / `drift_floor=5e-3` defaults are conservative
-   — Fossen 3-DOF Y_v's ~0.001%/epoch drift is below the floor. Tuning
+   — 3-DOF coupled-drag c_y's ~0.001%/epoch drift is below the floor. Tuning
    open.

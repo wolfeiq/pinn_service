@@ -257,7 +257,7 @@ Two unusual things:
 2. **CPU wins wall-clock.** For a 4.6K-param MLP, GPU dispatch overhead
    per batch exceeds the compute saved. MPS only pays off for much
    larger models (~10⁵ params and up). This is a small-model edge case;
-   we'd expect MPS to win on Phase-3 Fossen 6-DOF or Cosserat templates
+   we'd expect MPS to win on Phase-3 6-DOF rigid-body or Cosserat templates
    where the network is bigger.
 
 **Honest framing for documentation / X-post:**

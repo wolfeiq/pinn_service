@@ -17,8 +17,8 @@ PINN, EKF, or hand-tuned recipe will do better — the data is the limit.
 
 Examples (verified empirically — see ``compute_template_crlb_report``):
   * Damped oscillator: tiny CRLB SE → empirical convergence matches.
-  * Fossen 1-DOF surge: moderate CRLB SE on X_uu → empirically partial-id.
-  * Fossen 3-DOF: Y_v has large CRLB SE → empirically Y_v is the stuck unknown.
+  * 1-DOF nonlinear-drag: moderate CRLB SE on c_quad → empirically partial-id.
+  * 3-DOF coupled-drag: c_y has large CRLB SE → empirically c_y is the stuck unknown.
 
 The estimator uses central finite differences for sensitivity; for noisy or
 nonlinear forwards, ``perturb_rel`` may need tuning, but 1e-3 is robust.
@@ -182,7 +182,7 @@ def compute_template_crlb(template_name: str, perturb_rel: float = 1e-3) -> CRLB
         raise ValueError(f"template {template_name!r} has no 'truth' attribute")
 
     # Wrap synthetic_data so it accepts a perturbed truth dict. Most generators
-    # take their unknowns as kwargs (e.g. generate_fossen_surge(X_u=..., ...)),
+    # take their unknowns as kwargs (e.g. generate_nonlinear_drag_1d(c_lin=..., ...)),
     # so we forward via kwargs. The template's synthetic_data(seed) doesn't
     # accept truth overrides — go through pinn_engine.data.synthetic directly.
     from pinn_engine.data import synthetic as syn_mod
@@ -191,8 +191,8 @@ def compute_template_crlb(template_name: str, perturb_rel: float = 1e-3) -> CRLB
         "damped_oscillator": "generate_damped_oscillator",
         "lorenz":            "generate_lorenz",
         "pendulum":          "generate_pendulum",
-        "fossen_surge":      "generate_fossen_surge",
-        "fossen_3dof":       "generate_fossen_3dof",
+        "nonlinear_drag_1d": "generate_nonlinear_drag_1d",
+        "coupled_drag_3d":   "generate_coupled_drag_3d",
         "diffusion_1d":      "generate_diffusion_1d",
         "cosserat_rod":      "generate_cosserat_rod",
     }

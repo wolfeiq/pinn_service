@@ -43,7 +43,7 @@ Each run uses `adaptive_unknowns_lr=True` and the **template's own
 | `damped_oscillator` | ODE, 2 unknowns | c **0.11%**, k **0.01%** | — | latches converged |
 | `lorenz` | ODE, 3 unknowns | σ 0%, ρ 0%, β **0.03%** | — | latches converged |
 | `pendulum` | ODE, 1 unknown | c **0.85%** | — | latches; needs full 1500 epochs |
-| `fossen_surge` | ODE, partial-id | X_u **13%**, X_uu **15%** | ~10% | matches baseline; residual is inherent partial-identifiability |
+| `nonlinear_drag_1d` | ODE, partial-id | c_lin **13%**, c_quad **15%** | ~10% | matches baseline; residual is inherent partial-identifiability |
 | `diffusion_1d` | parabolic PDE | D **1.6%** | 1.7% | latches |
 | `cosserat_rod` | wave-eq basin | E **8.0%** | 4.5% (two-phase) | cap holds; can't latch (probes useless against cap) |
 
@@ -53,7 +53,7 @@ is what saves it from the runaway that ended iter #4 at 53% error. Telemetry
 from the basin run shows three commits (`base_mult` 0.6 → 1.2 → 2.4 → 4.0)
 at ep18, 22, 27, then the cap holds for 25+ further epochs. Descent stayed
 at a controlled ~-0.013 units/epoch and crossed truth at ep42, settling at
-0.92. Fossen's residual error is inherent — `m·u̇ = τ + X_u·u + X_uu·u²` has
+0.92. the partial-identifiability residual error is inherent — `m·u̇ = τ + c_lin·u + c_quad·u²` has
 two unknowns with a multiplicative coupling, so the data doesn't uniquely
 pin both. The controller correctly identifies "no probe can improve further"
 and latches; closing the gap needs tighter bounds or more sensors, not
@@ -67,15 +67,15 @@ better control.
 unknown's bound midpoint (= PINA's init point); supply an explicit dict to
 override per-unknown.
 
-**When to use it:** partially-identifiable problems (Fossen-style: multiple
+**When to use it:** partially-identifiable problems (coupled-drag-style: multiple
 unknowns with multiplicative coupling, where the data doesn't uniquely pin
 all of them). Without a prior, the optimizer picks an arbitrary point on the
 data-consistent manifold; with a prior, it picks the closest one to your
 anchor.
 
-**Validation on Fossen** (truth `(-10, -30)`, baseline rel_err 13–15%):
+**Validation on the partial-id case** (truth `(-10, -30)`, baseline rel_err 13–15%):
 
-| λ | anchor | X_u rel_err | X_uu rel_err |
+| λ | anchor | c_lin rel_err | c_quad rel_err |
 |---|---|---|---|
 | 0 | — | 13.06% | 15.30% |
 | 0.01 | midpoint | 11.92% | 16.40% |
@@ -83,10 +83,10 @@ anchor.
 | 1.0 | **truth** | **0.78%** | **6.69%** |
 | 0.5 | partial guess `(-8, -25)` | 15.43% | 4.82% |
 
-The midpoint default *worsens* Fossen because its bounds are very wide and
-asymmetric (X_u ∈ (−25, 0), midpoint −12.5; truth −10; the prior pulls the
+The midpoint default *worsens* the partial-id case because its bounds are very wide and
+asymmetric (c_lin ∈ (−25, 0), midpoint −12.5; truth −10; the prior pulls the
 wrong direction). The feature shines when the user supplies a meaningful
-anchor — proven by the λ=1.0 anchor=truth run dropping X_u rel_err to 0.78%.
+anchor — proven by the λ=1.0 anchor=truth run dropping c_lin rel_err to 0.78%.
 Honest guidance: pass a real prior or leave λ at 0.
 
 ## Companion feature: iterative bound-tightening
@@ -108,7 +108,7 @@ subsequent rounds converge faster and more precisely.
 Iter 1 → iter 2 = **45× tighter** rel_err. Iter 3 stabilizes at the minimum
 the bracket allows.
 
-**When NOT to use it:** doesn't help partial-identifiability. On Fossen, all
+**When NOT to use it:** doesn't help partial-identifiability. On the partial-id case, all
 3 iterations stay near −8.3 to −8.7 (truth −10) — the optimizer
 deterministically falls into the same wrong basin, and tightening bounds
 around it just rediscovers that basin more reliably. For partial-id, use the
@@ -128,9 +128,9 @@ L2 prior with a meaningful anchor.
 ## Pitfall: do not force a universal `param_lr_scale`
 
 Cosserat's E_unit is O(1) but its physics residual gradient on E is tiny, so
-it needs lr_scale=500 for the unknown to move at all. Fossen's X_u is O(10)
+it needs lr_scale=500 for the unknown to move at all. the partial-id problem's c_lin is O(10)
 with a much stronger gradient and converges fine at lr_scale=1.0. Forcing
-500 on Fossen overshoots the unknowns by ~100× the right step and the
+500 on forcing it on this problem overshoots the unknowns by ~100× the right step and the
 controller can't recover (it reaches 90% rel_err). Each template's
 `default_config().param_lr_scale` reflects this problem-specific knowledge
 — treat it as a starting point the controller adapts from, not something to

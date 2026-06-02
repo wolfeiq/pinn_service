@@ -104,7 +104,7 @@ class AdaptiveUnknownsController(pl.Callback):
         # really has settled. Above this, give it more time (back to DESCEND).
         # Catches the failure mode where probe deltas (~10%) miss the longer-
         # term productive drift on slow-converging coupled unknowns like
-        # fossen_3dof Y_v.
+        # coupled_drag_3d c_y.
         self.convergence_window = int(convergence_window)
         self.drift_floor = float(drift_floor)
         self._value_history: dict = {}   # name -> list of recent values
