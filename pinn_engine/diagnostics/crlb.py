@@ -188,13 +188,15 @@ def compute_template_crlb(template_name: str, perturb_rel: float = 1e-3) -> CRLB
     from pinn_engine.data import synthetic as syn_mod
     # Map template name -> generator function name in synthetic.py.
     gen_map = {
-        "damped_oscillator": "generate_damped_oscillator",
-        "lorenz":            "generate_lorenz",
-        "pendulum":          "generate_pendulum",
-        "nonlinear_drag_1d": "generate_nonlinear_drag_1d",
-        "coupled_drag_3d":   "generate_coupled_drag_3d",
-        "diffusion_1d":      "generate_diffusion_1d",
-        "cosserat_rod":      "generate_cosserat_rod",
+        "damped_oscillator":     "generate_damped_oscillator",
+        "lorenz":                "generate_lorenz",
+        "pendulum":              "generate_pendulum",
+        "nonlinear_drag_1d":     "generate_nonlinear_drag_1d",
+        "coupled_drag_3d":       "generate_coupled_drag_3d",
+        "diffusion_1d":          "generate_diffusion_1d",
+        "cosserat_rod":          "generate_cosserat_rod",
+        "euler_bernoulli_beam":  "generate_euler_bernoulli_beam",
+        "axial_elastic_bar":     "generate_axial_elastic_bar",
     }
     gen_name = gen_map.get(template_name)
     if gen_name is None or not hasattr(syn_mod, gen_name):

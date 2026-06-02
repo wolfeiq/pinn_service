@@ -6,5 +6,7 @@ from pinn_engine.dsl.templates_lib import (
     nonlinear_drag_1d,
     coupled_drag_3d,
     pendulum,
-    cosserat_rod,  # noqa: F401
+    cosserat_rod,
+    euler_bernoulli_beam,
+    axial_elastic_bar,  # noqa: F401
 )  # noqa: F401

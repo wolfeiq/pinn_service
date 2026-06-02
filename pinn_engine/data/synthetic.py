@@ -337,3 +337,113 @@ def generate_diffusion_1d(
             u_noisy.flatten().astype(np.float32),
         )
     }, {"D": D}
+
+
+# -------------------------------------------------------------- Euler-Bernoulli beam (4th-order static)
+
+
+def generate_euler_bernoulli_beam(
+    EI_unit: float = 1.0,
+    q0: float = 100.0,
+    L: float = 1.0,
+    EI_ref: float = 1000.0,
+    n_sensors: int = 21,
+    noise_std: float = 1e-3,
+    seed: int = 0,
+):
+    """Static deflection of a simply-supported Euler-Bernoulli beam under a
+    uniform distributed load — returned **non-dimensional**.
+
+    PDE (static, 4th-order in one spatial variable):
+        EI · w''''(x)  =  q_0
+    Boundary conditions: ``w(0) = w(L) = 0`` (supports), and implicitly
+    ``w''(0) = w''(L) = 0`` (moment-free ends).
+
+    Closed-form solution for constant ``q_0`` and homogeneous BCs:
+
+        w(x) = q_0 / (24·EI) · x · (L − x) · (L² + L·x − x²)
+
+    We non-dimensionalise: ``ŵ = w / W_ref`` with ``W_ref = q_0·L⁴ /
+    (24·EI_ref)``, and ``EI_unit = EI / EI_ref``. The compiled residual
+    used by the template is ``EI_unit · ŵ''''(x) − 24 = 0``, so the
+    generator returns ``ŵ`` (not ``w``) directly — both ``ŵ`` and
+    ``EI_unit`` are O(1) and the loss landscape is well conditioned.
+
+    The inverse problem: recover ``EI_unit`` from noisy ``ŵ(x_k) + ε_k``.
+
+    Returns ``(data, truth)`` with two sensors:
+      * ``w_meas`` — ``n_sensors`` noisy interior dimensionless-deflection
+        samples.
+      * ``w_bc``  — the two boundary conditions ``ŵ(0) = ŵ(L) = 0`` as
+        noise-free pseudo-sensors.
+    """
+    rng = np.random.default_rng(seed)
+    x = np.linspace(0.0, L, n_sensors)
+    # Dimensionless closed-form: ŵ(x) = x · (L−x) · (L² + L·x − x²) / EI_unit
+    # (factor of 1 from cancelling q_0·L⁴/(24·EI_ref·W_ref) = 1).
+    w_unit_clean = x * (L - x) * (L * L + L * x - x * x) / float(EI_unit)
+    w_unit_noisy = w_unit_clean + rng.normal(0.0, noise_std, size=w_unit_clean.shape)
+    # BC at x=0 and x=L: ŵ = 0 (simply-supported).
+    x_bc = np.array([0.0, L], dtype=np.float64)
+    w_bc = np.array([0.0, 0.0], dtype=np.float64)
+    return (
+        {
+            "w_meas": (x.astype(np.float32), w_unit_noisy.astype(np.float32)),
+            "w_bc":   (x_bc.astype(np.float32), w_bc.astype(np.float32)),
+        },
+        {"EI_unit": float(EI_unit)},
+    )
+
+
+
+# -------------------------------------------------------------- axial elastic bar (2nd-order static)
+
+
+def generate_axial_elastic_bar(
+    EA_unit: float = 1.0,
+    p0: float = 100.0,
+    L: float = 1.0,
+    EA_ref: float = 1000.0,
+    n_sensors: int = 21,
+    noise_std: float = 1e-3,
+    seed: int = 0,
+):
+    """Static axial displacement of an elastic bar fixed at ``x=0``, free at
+    ``x=L``, under a uniform distributed axial load ``p_0`` per unit length.
+
+    ODE (static, 2nd-order in one spatial variable):
+        EA · u''(x)  =  −p_0
+    Boundary conditions: ``u(0) = 0`` (clamped) and ``EA · u'(L) = 0``
+    (traction-free at the free end).
+
+    Closed-form solution:
+        u(x) = (p_0 / (2 · EA)) · x · (2L − x)
+
+    We non-dimensionalise as in the Euler-Bernoulli template:
+    ``û = u / U_ref`` with ``U_ref = p_0 · L² / (2 · EA_ref)``, and
+    ``EA_unit = EA / EA_ref``. The compiled residual used by the
+    template is ``EA_unit · û''(x) + 2 = 0`` so the dimensionless
+    deflection peaks at ``û(L) = 1 / EA_unit`` — same scale family as
+    the beam template.
+
+    Returns ``(data, truth)`` with two sensors:
+      * ``u_meas`` — ``n_sensors`` noisy interior displacement samples.
+      * ``u_bc``  — the clamped boundary ``û(0) = 0`` as a noise-free
+        pseudo-sensor.
+    """
+    rng = np.random.default_rng(seed)
+    x = np.linspace(0.0, L, n_sensors)
+    # Dimensionless closed-form: û(x) = x · (2L − x) / EA_unit
+    # (factor of 1 from cancelling p_0·L²/(2·EA_ref·U_ref) = 1).
+    u_unit_clean = x * (2.0 * L - x) / float(EA_unit)
+    u_unit_noisy = u_unit_clean + rng.normal(0.0, noise_std, size=u_unit_clean.shape)
+    # BC at x=0: clamped.
+    x_bc = np.array([0.0], dtype=np.float64)
+    u_bc = np.array([0.0], dtype=np.float64)
+    return (
+        {
+            "u_meas": (x.astype(np.float32), u_unit_noisy.astype(np.float32)),
+            "u_bc":   (x_bc.astype(np.float32), u_bc.astype(np.float32)),
+        },
+        {"EA_unit": float(EA_unit)},
+    )
