@@ -1,8 +1,8 @@
 # `pinn-engine` — engineering reference
 
 Single-file reference for the engine: changelog, architecture, capabilities,
-training pipeline, and all the math. Authoritative as of 2026-06-02; see the
-git log for newer changes.
+training pipeline, and all the math. Authoritative as of 2026-06-02 (CRLB
+diagnostic + drift-guard era); see the git log for newer changes.
 
 ---
 
@@ -50,6 +50,20 @@ Bundled with 7 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 ## Changelog
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
+
+### CRLB-driven R&D (Jun 02, 2026)
+
+- (**e6a65d0** 2026-06-02) Controller drift-guard: before latching CONVERGED
+  on a failed probe, check if any unknown has accumulated `drift_floor`
+  drift over the last `convergence_window` epochs. If so, return to
+  DESCEND. Scaffolded; thresholds need empirical tuning.
+- (**fbe4e23** 2026-06-02) **CRLB preflight diagnostic** added
+  (`pinn_engine.diagnostics.crlb.compute_template_crlb`). Reveals 25× CRLB
+  headroom on diffusion, 36× on Fossen 3-DOF Y_v, 70× on Cosserat — the
+  engine's empirical results are far from data-theoretic limits on
+  several templates.
+- (**b568eca** 2026-06-02) `docs/ENGINE.md` (this file) added — single-file
+  engineering reference.
 
 ### Adaptive control + regularization era (May 28 – Jun 02, 2026)
 
@@ -254,9 +268,17 @@ What the engine handles **today** (2026-06-02):
 **Diagnostics + reproducibility:**
 
 - Per-epoch unknown-parameter JSON dump (survives OOM/SIGKILL).
+- **CRLB preflight** (`pinn_engine.diagnostics.crlb.compute_template_crlb`):
+  Cramér-Rao lower bound on each unknown's standard error, computed by
+  forward simulation only (no training). Tells you the best possible
+  uncertainty the data + sensor noise can support, *before* spending hours
+  training. Separates data-limited problems (engine at CRLB floor → no
+  improvement possible without better sensors/data) from training-limited
+  problems (large gap → room to improve via more epochs / tuning /
+  regularization).
 - Sensor-residual diagnostic callback.
 - Spectral-bias diagnostic (frequency-domain network output analysis).
-- Parameter-confidence diagnostic (bootstrap-style).
+- Parameter-confidence diagnostic (per-epoch unknown tracking).
 - Deep-ensemble UQ (`pinn_engine.uq`).
 - Reproducibility manifest per run (hashes everything: equation canonical
   form, data, config, network init).
@@ -476,6 +498,28 @@ improving(t)   = loss(t) < best_loss · 0.999
 
 - **CONVERGED**: hold `eff_mult = converged_mult` (low LR, rest).
 
+**Drift-guard against premature CONVERGED latching** (added 2026-06-02 after
+the CRLB diagnostic revealed Fossen 3-DOF Y_v has 36× headroom while the
+controller was prematurely declaring convergence on it):
+
+Before latching CONVERGED on a failed probe, check whether *any* unknown
+has accumulated more than `drift_floor` of drift over the last
+`convergence_window` epochs. If yes, go back to DESCEND — the slow
+descent is real, the probe just doesn't add to it.
+
+```
+for name in unknowns:
+    if |hist[name][-1] − hist[name][0]| / range[name] > drift_floor:
+        → still drifting; revert to DESCEND, reset stall counter
+    else:
+        → not drifting; latch CONVERGED
+```
+
+Default `convergence_window = 20`, `drift_floor = 5e-3`. Per the
+`docs/ENGINE.md` known-issues section, these defaults are conservative
+and miss the ultra-slow drift seen on Fossen 3-DOF Y_v (~0.001%/epoch);
+tuning is open work.
+
 **Cap**: `base_mult` clamped to `[min_mult, max_mult]` (defaults `0.02`,
 `4.0`). The cap is what prevents the probe-commit loop from running away
 exponentially on problems where the loss keeps dropping cosmetically (the
@@ -560,6 +604,60 @@ deterministically lands at the wrong basin (e.g., Fossen `X_u=−8.4` vs
 truth `−10`), tightening around `−8.4` just rediscovers the wrong basin
 more reliably. For partial-id, use the L2 prior with an explicit anchor.
 
+### Cramér-Rao lower bound (CRLB preflight)
+
+For an inverse problem `y_k = h_k(u(x_k, t_k); θ) + ε_k` with
+`ε_k ~ 𝒩(0, σ_k²)`, any unbiased estimator `θ̂` satisfies the Cramér-Rao
+inequality:
+
+```
+Cov(θ̂)  ≥  F⁻¹
+F        =  Sᵀ · diag(1/σ²) · S                 (Fisher information)
+S[k, i]  =  ∂y_k / ∂θ_i                         (sensitivity matrix)
+```
+
+The diagonal of `F⁻¹` gives the best-achievable per-parameter variance;
+`SE_i = √diag(F⁻¹)_i`. Importantly, **this bound applies to any estimator**
+— PINN, EKF, Kalman smoother, hand-tuned recipe. If CRLB SE on `X_u` is 5%,
+no algorithm will do better with that data + noise.
+
+**Implementation** (`pinn_engine/diagnostics/crlb.py`):
+
+1. Forward-simulate at truth via the template's data generator → baseline
+   observations `y_k(θ)`.
+2. For each unknown `θ_i`, simulate at `θ ± δ_i` (central difference,
+   `δ_i = perturb_rel · |θ_i|`). Hold the seed fixed so the noise term
+   cancels in the finite difference.
+3. Sensitivity per sensor: `S[k, i] = (y_k(θ + δ_i) − y_k(θ − δ_i)) / (2·δ_i)`.
+4. Stack into a single `(n_obs, n_unknowns)` matrix with rows weighted by
+   `1/σ_k` per sensor block.
+5. `F = Sᵀ S`, then `Cov = pinv(F)` (pseudoinverse so ill-conditioned
+   partial-id cases produce large-but-non-NaN SEs that surface the
+   problem).
+6. Return `SE_i`, `SE_i / |θ_i|`, and the `95% CI half-width = 1.96·SE_i`.
+
+Cost: `2N+1` forward simulations for `N` unknowns. For ODEs that's seconds;
+for the Cosserat wave-eq simulator (FD scheme) it's also under a second.
+
+**Validation across all 7 templates** (2026-06-02) — empirical convergence
+vs CRLB SE per unknown reveals where the engine is and isn't at the
+data-theoretic limit:
+
+| template | unknown | CRLB SE (rel) | best empirical | gap | reading |
+|---|---|---|---|---|---|
+| `damped_oscillator` | c, k | 0.15% / 0.02% | 0.11% / 0.01% | ~1× | at CRLB floor |
+| `lorenz` | σ, ρ, β | <0.005% | <0.05% | ~1× | at CRLB floor |
+| `pendulum` | c | 0.14% | 0.43% | 3× | small headroom |
+| `diffusion_1d` | D | **0.063%** | 1.57% (50ep) / 0.24% (200ep) | 4-25× | **epoch-starved** |
+| `fossen_surge` | X_u, X_uu | 5.5% / 4.6% | 13% / 15% | 2-3× | near floor (partial-id real) |
+| `fossen_3dof` | X_u, **Y_v**, N_r | 0.19% / **0.62%** / 0.12% | 1.8% / 14% / 6.6% | up to **36×** | **Y_v is *training*-limited, not partial-id** |
+| `cosserat_rod` | E_unit | **0.11%** | 4.5% hand-tuned, 8% adaptive | **40-70×** | **huge training-limited headroom** |
+
+The Cosserat finding is the most important — both the hand-tuned 4.5% and
+the adaptive controller's 8% are far from the data-theoretic floor (0.11%).
+PINN training is the bottleneck, not identifiability. That's a real future
+R&D opportunity.
+
 ### Loss balancers
 
 - **`"none"` (default)**: per-condition static weights from `lam_data_init`
@@ -603,7 +701,7 @@ All add Gaussian noise; all are reproducible from seed.
 | `pendulum` | `I·θ̈ + c·θ̇ + mgL·sin(θ) = 0` | c | **0.43%** (adaptive + iterative) |
 | `fossen_surge` | `m·u̇ + drag` | X_u, X_uu | 13% adaptive; **0.78%** + L2 prior (truth anchor) |
 | `fossen_3dof` | planar surge-sway-yaw + Coriolis | X_u, Y_v, N_r | adaptive 1.8/22/6.6%; **0/1.4/0%** + L2 prior (full truth) |
-| `diffusion_1d` | `u_t = D·u_xx` | D | **1.6%** (adaptive, latches) |
+| `diffusion_1d` | `u_t = D·u_xx` | D | **1.6%** at 50 ep / **0.24%** at 200 ep / **0.10%** at 200 ep + L2 prior anchor=truth (= CRLB floor 0.063%) |
 | `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave) | E_unit | **4.5%** (hand-tuned two-phase, run #16); 8% (adaptive, cap-limited) |
 
 ---
@@ -618,6 +716,8 @@ from pinn_engine.core.trainer import TrainConfig, train, TrainResult
 from pinn_engine.core.iterative_train import iterative_train, IterativeResult
 from pinn_engine.core.adaptive_controller import AdaptiveUnknownsController
 from pinn_engine.core.unknowns_dumper import UnknownsDumper
+from pinn_engine.diagnostics.crlb import compute_crlb, compute_template_crlb, CRLBResult
+from pinn_engine.uq import train_ensemble, EnsembleResult   # Monte-Carlo seed-ensemble UQ
 ```
 
 ### Minimal usage
@@ -630,6 +730,17 @@ cfg = tpl.default_config()
 cfg.adaptive_unknowns_lr = True
 result = train(system, data, cfg, callbacks=[AdaptiveUnknownsController()])
 print(result.final_params)
+```
+
+### CRLB preflight (do this BEFORE training)
+
+```python
+from pinn_engine.diagnostics.crlb import compute_template_crlb
+r = compute_template_crlb("diffusion_1d")
+print(r.summary_table())
+# Reports: per-unknown SE lower bound + relative + 95% CI half-width.
+# If SE_relative on your unknown is, say, 30%, your sensors physically
+# cannot identify it better than that — no PINN, EKF, or hand-tuning will.
 ```
 
 ### Iterative refinement
@@ -686,10 +797,12 @@ pinn-engine dashboard
    the data-loss brake therefore didn't fire in iter #5. Root cause not
    fully traced (probably callback-order / multi-batch CSV-schema interaction);
    the `max_mult=4` cap is the working safety until this is fixed.
-2. **Cosserat auto-tune ceiling at ~8%**: the adaptive controller is
-   cap-limited; the hand-tuned two-phase recipe still gets to 4.5%. Closing
-   this needs either a working data-loss brake or RAR adaptive collocation
-   (`docs/cosserat_causal_experiments.md` for the full R&D arc).
+2. **Cosserat is *training*-limited, not data-limited.** CRLB SE on E_unit is
+   0.11%; both the adaptive controller (8%) and the hand-tuned two-phase
+   recipe (4.5%) are 40-70× off. Closing this is real R&D — candidates:
+   working data-loss brake, RAR adaptive collocation, much longer training
+   budget at the template default (10000 ep vs the 50 we ran). See
+   `docs/cosserat_causal_experiments.md` for the historical R&D arc.
 3. **Bounds-clamp timing**: PINA clamps unknowns in `loss_data` (which runs
    *after* `optimizer.step`), so an unknown can transiently leave its
    bounds for one epoch before being clamped. Diffusion was observed at
@@ -704,3 +817,16 @@ pinn-engine dashboard
    (with added-mass coupling, multi-rate sensors, body↔NED frame) would
    be the natural next step, drawing on the user's existing `auv_pinn`
    project for what to model and what's identifiable.
+6. **Experiment scripts have been epoch-starved.** Several R&D runs set
+   `adam_epochs=50` for fast iteration; this is far below the template's
+   intended production budget (e.g. `diffusion_1d` defaults to 10000,
+   `cosserat_rod` to 10000). Diffusion at 200 ep is **7× tighter** than at
+   50 ep (1.71% → 0.24%); Fossen 3-DOF Y_v at 8000 ep is 1.6× tighter
+   than at 2000 ep. The empirical baselines in this doc reflect a mix of
+   debug and production budgets — check `cfg.adam_epochs` before drawing
+   "the engine can't do better" conclusions.
+7. **Adaptive controller's CONVERGED latch fires too eagerly on slow
+   coupled descents.** Drift-guard scaffolded (commit `e6a65d0`) but its
+   `convergence_window=20` / `drift_floor=5e-3` defaults are conservative
+   — Fossen 3-DOF Y_v's ~0.001%/epoch drift is below the floor. Tuning
+   open.
