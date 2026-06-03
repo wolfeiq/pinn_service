@@ -75,6 +75,7 @@ class AdaptiveUnknownsController(pl.Callback):
         stop_on_converge: bool = False,
         convergence_window: int = 20,
         drift_floor: float = 5e-3,
+        min_epochs_before_converged: int = 0,
     ):
         super().__init__()
         self.warmup_epochs = int(warmup_epochs)
@@ -107,6 +108,18 @@ class AdaptiveUnknownsController(pl.Callback):
         # coupled_drag_3d c_y.
         self.convergence_window = int(convergence_window)
         self.drift_floor = float(drift_floor)
+        # Optional minimum-duration guard on the CONVERGED transition.
+        # Hypothesised as a fix for premature convergence (controller giving
+        # up at ep ~14 on coupled_drag_3d) but empirically *hurts* on
+        # well-conditioned templates — the controller's continued
+        # intervention in DESCEND/PROBE state is what degrades convergence,
+        # not premature CONVERGED. Sweep on coupled_drag_3d:
+        #   min_epochs=0   (default, instant CONVERGED ok):  c_x 1.8%/c_y 22%/c_n 6.6%
+        #   min_epochs=500 (delayed CONVERGED):              c_x 6.6%/c_y 23%/c_n 11%
+        #   min_epochs=2000 (essentially disabled):          c_x 11.2%/c_y 23%/c_n 12%
+        # Default 0 (disabled). Available as a knob for problems where
+        # this actually helps; if you're not sure, leave it off.
+        self.min_epochs_before_converged = int(min_epochs_before_converged)
         self._value_history: dict = {}   # name -> list of recent values
 
         self._group_idx: Optional[int] = None
@@ -275,7 +288,12 @@ class AdaptiveUnknownsController(pl.Callback):
                             if drift > self.drift_floor:
                                 still_drifting = True
                                 break
-                    if still_drifting:
+                    # Minimum-duration guard: refuse to latch CONVERGED until
+                    # the network has had at least min_epochs_before_converged
+                    # epochs to develop a meaningful gradient on the unknown.
+                    # Before that, what looks like a "stalled probe" is the
+                    # network still fitting the field, not a true optimum.
+                    if still_drifting or ep < self.min_epochs_before_converged:
                         self._state = "descend"
                         self._stall = 0
                     else:

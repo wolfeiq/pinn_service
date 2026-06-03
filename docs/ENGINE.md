@@ -42,14 +42,27 @@ Built on **PINA** (PINN library) + **PyTorch Lightning** (training loop) +
 - A **reproducibility manifest** + diagnostics (UQ ensemble, spectral bias,
   parameter confidence, sensor residuals) per run.
 
-Bundled with 7 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
-3-DOF ODE, 2 PDE — see [Templates inventory](#templates-inventory)).
+Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
+3-DOF ODE, 2 dynamic PDEs, 2 static structural PDEs — see
+[Templates inventory](#templates-inventory)).
 
 ---
 
 ## Changelog
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
+
+### Construction-templates era (Jun 02, 2026)
+
+- (**257060a** 2026-06-02) **Two new construction-engineering templates**
+  added — `euler_bernoulli_beam` (first 4th-order spatial PDE in the
+  engine; rel_err currently training-limited) and `axial_elastic_bar`
+  (2nd-order static elasticity; converges to 0.26% rel_err in 24 s, near
+  the CRLB floor 0.03%). Both non-dimensionalised so loss landscape is
+  well-conditioned.
+- Attempted `burgers_1d` (nonlinear PDE) but deferred — Cole-Hopf at the
+  canonical ν = 0.01/π has float64 precision issues, and finite-difference
+  forward solvers blow up at shock formation. Future session needed.
 
 ### CRLB-driven R&D (Jun 02, 2026)
 
@@ -703,6 +716,8 @@ All add Gaussian noise; all are reproducible from seed.
 | `coupled_drag_3d` | planar three-axis planar + Coriolis | c_lin, c_y, c_n | adaptive 1.8/22/6.6%; **0/1.4/0%** + L2 prior (full truth) |
 | `diffusion_1d` | `u_t = D·u_xx` | D | **1.6%** at 50 ep / **0.24%** at 200 ep / **0.10%** at 200 ep + L2 prior anchor=truth (= CRLB floor 0.063%) |
 | `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave) | E_unit | **4.5%** (hand-tuned two-phase, run #16); 8% (adaptive, cap-limited) |
+| `axial_elastic_bar` | `EA·u'' + p₀ = 0` (static, clamped-free) | EA_unit | **0.26%** in 24 s on CPU (near CRLB 0.03%) |
+| `euler_bernoulli_beam` | `EI·w'''' = q₀` (static, simply-supported) | EI_unit | training-limited (CRLB 0.10%; engine convergence is slow on the 4th-order autograd path) |
 
 ---
 
