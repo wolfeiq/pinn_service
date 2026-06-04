@@ -21,10 +21,11 @@ def run_one(label, rar):
     cfg = tpl.default_config()
     cfg.seed = 0
     cfg.skip_preflight = True
+    cfg.adam_epochs = 2000   # short ablation; full 10k would dominate
     if rar:
         cfg.rar_enable = True
         cfg.rar_refresh_every = 200
-        cfg.rar_candidate_pool = 10_000
+        cfg.rar_candidate_pool = 8_000
         cfg.rar_keep_old_fraction = 0.5
         cfg.rar_warmup_epochs = 100
     data, truth = tpl.synthetic_data(seed=0)

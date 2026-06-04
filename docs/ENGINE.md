@@ -52,6 +52,40 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### RAR + L-BFGS R&D (Jun 04, 2026)
+
+- (**c5c5ecb** 2026-06-04) **RAR (residual-based adaptive collocation
+  refinement)** added (Wu et al. 2022, CMAME 403, 115671). Callback
+  draws a large uniform candidate pool from the physics domain every
+  N epochs, evaluates `|residual|` via the solver's `compute_residual`,
+  keeps the top-K candidates, mixes with a fraction of the existing
+  points, and rewrites the dataset in-place via PinaTensorDataset's
+  `update_data`. New `rar_*` TrainConfig knobs; all default off.
+  **Empirical win on diffusion_1d (smooth-solution problem!): 0.64%
+  → 0.14% rel_err (4.5×), only +2% wallclock overhead** at 2000-epoch
+  budget. RAR composes with the controller, CausalPINN, L2 prior, and
+  L-BFGS finetune.
+- (**ed369cd** 2026-06-04) Controller `min_epochs_before_converged`
+  knob added (default off). Sweep showed forcing the controller to
+  stay in DESCEND/PROBE longer *hurts* on well-conditioned templates
+  — coupled_drag_3d c_x drifts 1.8% → 11.2% as min_epochs goes
+  0 → 2000. The earlier "premature convergence at ep14" was actually
+  the controller correctly stepping aside; its continued intervention
+  is what degrades the result. Knob kept available, default disabled.
+- L-BFGS post-Adam **NULL on c_y plateau** (coupled_drag_3d): c_y stays
+  at 21.86% → 21.82% with LBFGS-50. c_x tightens (0.40% → 0.11%) but
+  the c_y plateau is structural — partial identifiability *in practice*
+  at this data/network setup, not an optimizer issue. The L2 prior on
+  c_y remains the right tool for this; second-order optimization can't
+  rescue an information-limited unknown.
+- L-BFGS post-Adam **NULL on euler_bernoulli_beam**: at the template's
+  default 1500-epoch Adam budget, EI_unit is at 3.5 (vs truth 1.0,
+  250% rel_err). LBFGS-50 leaves EI_unit at 3.5 and actually *raises*
+  train loss (1.9 → 3336, line-search divergence). The fix for beam is
+  *more Adam epochs* (4th-order PDE needs a longer Adam phase), not a
+  second-order chaser. L-BFGS only refines an already-converged Adam
+  minimum; it can't compensate for under-budgeted first-order training.
+
 ### Construction-templates era (Jun 02, 2026)
 
 - (**257060a** 2026-06-02) **Two new construction-engineering templates**
