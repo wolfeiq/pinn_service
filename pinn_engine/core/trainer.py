@@ -323,6 +323,15 @@ class TrainConfig(BaseModel):
     n_collocation: int = 1000
     batch_size: int = 256
 
+    # Residual-based adaptive refinement (RAR): periodically replace
+    # collocation points with high-residual ones drawn from a larger
+    # candidate pool. Wu 2022 (CMAME). Default off; cheap once on.
+    rar_enable: bool = False
+    rar_refresh_every: int = Field(default=200, ge=1)
+    rar_candidate_pool: int = Field(default=10_000, ge=100)
+    rar_keep_old_fraction: float = Field(default=0.5, ge=0.0, lt=1.0)
+    rar_warmup_epochs: int = Field(default=100, ge=0)
+
     # Reproducibility
     seed: int = 42
     deterministic: bool = True
@@ -503,6 +512,16 @@ def train(
     if config.adaptive_unknowns_lr:
         from pinn_engine.core.adaptive_controller import AdaptiveUnknownsController
         callbacks.append(AdaptiveUnknownsController())
+
+    # Residual-based adaptive refinement of collocation points (RAR).
+    if config.rar_enable:
+        from pinn_engine.core.rar_sampler import RARSampler
+        callbacks.append(RARSampler(
+            refresh_every_epochs=config.rar_refresh_every,
+            candidate_pool=config.rar_candidate_pool,
+            keep_old_fraction=config.rar_keep_old_fraction,
+            warmup_epochs=config.rar_warmup_epochs,
+        ))
 
     # Wang 2022 §3.2 ε-annealing: bump ε once max-bucket residual is small.
     if is_causal and config.causal_eps_anneal:
