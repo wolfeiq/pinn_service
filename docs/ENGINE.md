@@ -52,6 +52,38 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Soft-robotics / large-deflection rod (Jun 07, 2026)
+
+- **`planar_elastica` template added (10th template)** — the
+  geometrically-exact, large-deflection soft-robot continuum rod the
+  `cosserat_rod` docstring promised ("include curvature strains for the
+  full soft-robotics formulation"). Static planar elastica cantilever in
+  tangent-angle form: `EI·θ''(s) = −P₀·cos(θ)`, `θ(0)=0`, `θ'(L)=0`. First
+  template with a **trig nonlinearity in a *spatial* (BVP) residual** — the
+  `cos(θ)` is the geometric nonlinearity, distinct from the linear
+  `euler_bernoulli_beam`. At load parameter `α = P₀L²/EI = 2.5` the tip
+  rotates 51° and droops 0.56·L — squarely large-deflection (linear beam
+  theory errs by tens of percent). Ground truth via `scipy.solve_bvp`;
+  sensors measure `θ(s̃)` directly (the fiber-Bragg / IMU-array model).
+- **Converges near the CRLB floor out of the box.** CRLB SE 0.46% (31 angle
+  sensors, 1e-2 rad noise); engine hits **0.565%** with RAR / 0.648%
+  baseline / 0.866% adaptive, all ~70 s on CPU. Plain tanh MLP,
+  `param_lr_scale=20`, **no Fourier features / no two-phase LR / no causal
+  weighting** — unlike the `cosserat_rod` wave equation, the static elastica
+  is convex in `EI_unit` given the measured shape (`EI_unit = −α·cosθ/θ''`
+  is a direct read-off), so there's no spurious basin. RAR composes with the
+  nonlinear residual and gives the same kind of modest edge it gives on
+  diffusion. More Adam budget (8000 ep) and L-BFGS both leave the converged
+  minimum unchanged — the data-fit, not the optimizer budget, sets the floor.
+- **Adaptive-controller trap reproduced + explained.** Enabling the
+  controller while resetting `param_lr_scale` to 1.0 caps the unknown's LR at
+  4e-3 (`max_mult=4`), too weak to leave the midpoint init → stalls at 4.75
+  (**375% err**). Keeping the template's `param_lr_scale=20` as the
+  controller base fixes it (0.866%). Concrete evidence for the standing "start
+  the controller from the template's own `param_lr_scale`" guidance. See
+  `docs/soft_robotics_elastica_experiments.md`; driver
+  `scripts/exp_planar_elastica.py`.
+
 ### RAR + L-BFGS R&D (Jun 04, 2026)
 
 - (**c5c5ecb** 2026-06-04) **RAR (residual-based adaptive collocation
@@ -739,7 +771,7 @@ All add Gaussian noise; all are reproducible from seed.
 
 ## Templates inventory
 
-7 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
+10 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
 
 | name | physics | unknowns | best result via engine |
 |---|---|---|---|
@@ -752,6 +784,7 @@ All add Gaussian noise; all are reproducible from seed.
 | `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave) | E_unit | **4.5%** (hand-tuned two-phase, run #16); 8% (adaptive, cap-limited) |
 | `axial_elastic_bar` | `EA·u'' + p₀ = 0` (static, clamped-free) | EA_unit | **0.26%** in 24 s on CPU (near CRLB 0.03%) |
 | `euler_bernoulli_beam` | `EI·w'''' = q₀` (static, simply-supported) | EI_unit | training-limited (CRLB 0.10%; engine convergence is slow on the 4th-order autograd path) |
+| `planar_elastica` | `EI·θ'' = −P₀·cos θ` (geometrically-exact large-deflection rod) | EI_unit | **0.565%** (RAR) / 0.648% (baseline) — near CRLB floor 0.46%, ~70 s on CPU |
 
 ---
 

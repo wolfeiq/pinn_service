@@ -105,7 +105,7 @@ to take pendulum from 19% to 0.43% (45× tighter) in one extra iteration.
 
 ## Bundled templates
 
-Seven inverse-problem templates (see `docs/ENGINE.md` for full math + the best
+Ten inverse-problem templates (see `docs/ENGINE.md` for full math + the best
 results achieved through the engine):
 
 | template | problem | unknowns |
@@ -117,6 +117,9 @@ results achieved through the engine):
 | `coupled_drag_3d` | planar 3-DOF rigid body with Coriolis coupling | c_x, c_y, c_n |
 | `diffusion_1d` | `u_t = D·u_xx` | D |
 | `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave equation) | E_unit |
+| `axial_elastic_bar` | `EA·u'' + p₀ = 0` (static elasticity) | EA_unit |
+| `euler_bernoulli_beam` | `EI·w'''' = q₀` (linear beam bending) | EI_unit |
+| `planar_elastica` | `EI·θ'' = −P₀·cos θ` (large-deflection soft rod) | EI_unit |
 
 ## Engine features
 

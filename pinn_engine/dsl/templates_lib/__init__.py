@@ -8,5 +8,6 @@ from pinn_engine.dsl.templates_lib import (
     pendulum,
     cosserat_rod,
     euler_bernoulli_beam,
-    axial_elastic_bar,  # noqa: F401
+    axial_elastic_bar,
+    planar_elastica,  # noqa: F401
 )  # noqa: F401

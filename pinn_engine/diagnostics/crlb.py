@@ -197,6 +197,7 @@ def compute_template_crlb(template_name: str, perturb_rel: float = 1e-3) -> CRLB
         "cosserat_rod":          "generate_cosserat_rod",
         "euler_bernoulli_beam":  "generate_euler_bernoulli_beam",
         "axial_elastic_bar":     "generate_axial_elastic_bar",
+        "planar_elastica":       "generate_planar_elastica",
     }
     gen_name = gen_map.get(template_name)
     if gen_name is None or not hasattr(syn_mod, gen_name):

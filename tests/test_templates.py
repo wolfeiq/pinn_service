@@ -7,7 +7,7 @@ from pinn_engine.dsl.templates import get_template
 
 @pytest.mark.parametrize("name", ["damped_oscillator", "lorenz", "diffusion_1d",
                                   "coupled_drag_3d", "euler_bernoulli_beam",
-                                  "axial_elastic_bar"])
+                                  "axial_elastic_bar", "planar_elastica"])
 def test_template_system_and_data(name):
     tpl = get_template(name)
     sys = tpl.system()
@@ -31,6 +31,25 @@ def test_diffusion_1d_data_and_input_order():
     assert "u_meas" in data and truth == {"D": 0.1}
     meas_input, _ = data["u_meas"]
     assert meas_input.shape[1] == 2
+
+
+def test_planar_elastica_nonlinear_residual_and_data():
+    import sympy as sp
+    tpl = get_template("planar_elastica")
+    sys = tpl.system()
+    sys.validate()
+    # The geometrically-exact rod must carry the cos(θ) nonlinearity — this is
+    # what distinguishes it from the linear euler_bernoulli_beam.
+    assert any(expr.has(sp.cos) for expr in sys.equations)
+    # Large-deflection ground truth: tip angle should be well into the
+    # nonlinear regime (~51° at the default load), not the small-slope limit.
+    data, truth = tpl.synthetic_data(seed=0)
+    assert truth == {"EI_unit": 1.0}
+    _, theta = data["theta_meas"]
+    assert theta.max() > 0.7  # radians (~40°+), genuinely large deflection
+    # Clamped-root BC pseudo-sensor is exactly zero, noise-free.
+    s_bc, theta_bc = data["theta_bc"]
+    assert float(theta_bc[0]) == 0.0
 
 
 def test_objective_returns_relative_error():

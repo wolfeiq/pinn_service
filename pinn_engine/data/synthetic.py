@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Dict, Tuple
 
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import solve_ivp, solve_bvp
 
 
 # -------------------------------------------------------------- damped oscillator
@@ -446,4 +446,100 @@ def generate_axial_elastic_bar(
             "u_bc":   (x_bc.astype(np.float32), u_bc.astype(np.float32)),
         },
         {"EA_unit": float(EA_unit)},
+    )
+
+
+# -------------------------------------------------------------- planar elastica (large-deflection Cosserat rod)
+
+
+def _solve_elastica_bvp(alpha: float, n_nodes: int = 201):
+    """Solve the dimensionless planar-elastica cantilever BVP for the tangent
+    angle ``θ(s̃)`` on ``s̃ ∈ [0, 1]``.
+
+        θ''(s̃)  =  −α · cos(θ(s̃)),   θ(0) = 0,   θ'(1) = 0
+
+    ``α = P·L²/EI`` is the elastica load parameter. Returns a callable
+    ``sol.sol`` (continuous interpolant) from :func:`scipy.integrate.solve_bvp`.
+    The initial guess uses the small-deflection parabola so the Newton solve
+    converges for the whole α-range we use (≤ 3).
+    """
+    def ode(s, y):
+        return np.vstack([y[1], -alpha * np.cos(y[0])])
+
+    def bc(ya, yb):
+        # Clamped angle at the root, moment-free (zero curvature) at the tip.
+        return np.array([ya[0], yb[1]])
+
+    s = np.linspace(0.0, 1.0, n_nodes)
+    y0 = np.zeros((2, s.size))
+    y0[0] = alpha * s * (1.0 - 0.5 * s)   # small-deflection seed
+    y0[1] = alpha * (1.0 - s)
+    sol = solve_bvp(ode, bc, s, y0, max_nodes=50000, tol=1e-9)
+    if not sol.success:
+        raise RuntimeError(f"elastica BVP failed to converge at alpha={alpha}: {sol.message}")
+    return sol
+
+
+def generate_planar_elastica(
+    EI_unit: float = 1.0,
+    P0: float = 2.5,
+    L: float = 1.0,
+    EI_ref: float = 1.0,
+    n_sensors: int = 31,
+    noise_std: float = 1e-2,
+    seed: int = 0,
+):
+    """Large-deflection planar elastica cantilever — the geometrically-exact
+    soft-robot continuum-rod inverse. Returns the tangent-angle profile.
+
+    A slender soft rod is clamped horizontal at ``s=0`` and carries a dead
+    tip load ``P0`` (downward) at the free end ``s=L``. Unlike the linear
+    ``euler_bernoulli_beam`` template (small-deflection, ``w'''' = q``), this
+    is the **geometrically-exact** Kirchhoff/Cosserat planar rod valid at
+    arbitrarily large deflection. In terms of the tangent angle ``θ(s)`` the
+    static balance of the bending moment ``M = EI·θ'`` against a tip load is
+
+        EI · θ''(s)  =  −P0 · cos(θ(s))
+
+    with ``θ(0) = 0`` (clamped horizontal) and ``θ'(L) = 0`` (moment-free
+    tip). The ``cos(θ)`` makes the problem nonlinear — at ``α = P0·L²/EI ≈
+    2.5`` the tip rotates ~51° and droops ~0.56·L, a regime where linear beam
+    theory is off by tens of percent. This is exactly the operating point of
+    a soft-robotic finger / continuum manipulator under its own payload.
+
+    **Non-dimensionalisation.** With ``s̃ = s/L`` and ``EI = EI_unit·EI_ref``,
+    the residual the template compiles is ``EI_unit·θ''(s̃) + α_ref·cos(θ) =
+    0`` with ``α_ref = P0·L²/EI_ref`` (= 2.5 at the defaults). The unknown
+    ``EI_unit`` sits multiplicatively on the highest derivative, O(1), in the
+    same well-conditioned family as the beam and bar templates.
+
+    **Sensors.** ``θ(s̃)`` is what flexible curvature sensors (fiber-Bragg
+    gratings, IMU arrays, stretch sensors) actually report along a soft rod,
+    so the angle formulation is the physical measurement model — no need to
+    differentiate a measured shape. ``noise_std`` is in radians.
+
+    Returns ``(data, truth)`` with two sensors:
+      * ``theta_meas`` — ``n_sensors`` noisy interior tangent-angle samples.
+      * ``theta_bc``  — the clamped root ``θ(0) = 0`` as a noise-free
+        pseudo-sensor.
+    """
+    rng = np.random.default_rng(seed)
+    alpha_ref = P0 * L * L / EI_ref
+    # The physical load parameter scales inversely with the true stiffness.
+    alpha = alpha_ref / float(EI_unit)
+    sol = _solve_elastica_bvp(alpha)
+
+    s = np.linspace(0.0, 1.0, n_sensors)
+    theta_clean = sol.sol(s)[0]
+    theta_noisy = theta_clean + rng.normal(0.0, noise_std, size=theta_clean.shape)
+
+    # Clamped-root BC θ(0) = 0 as a noise-free pseudo-sensor.
+    s_bc = np.array([0.0], dtype=np.float64)
+    theta_bc = np.array([0.0], dtype=np.float64)
+    return (
+        {
+            "theta_meas": (s.astype(np.float32), theta_noisy.astype(np.float32)),
+            "theta_bc":   (s_bc.astype(np.float32), theta_bc.astype(np.float32)),
+        },
+        {"EI_unit": float(EI_unit)},
     )
