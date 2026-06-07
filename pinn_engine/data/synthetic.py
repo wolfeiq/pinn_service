@@ -543,3 +543,125 @@ def generate_planar_elastica(
         },
         {"EI_unit": float(EI_unit)},
     )
+
+
+# -------------------------------------------------------------- full planar Cosserat rod (shear + extension)
+
+
+# Dimensionless reference stiffness numbers (= stiffness · L² / EI_ref) and the
+# constant tip load. Chosen so a *thick / soft* rod develops sizeable shear
+# (~6-15%) and axial (~5-9%) strain — i.e. all three stiffnesses are excited
+# and identifiable, not just bending. See docs/cosserat_planar_experiments.md.
+COSSERAT_EI0 = 1.0     # bending number (the reference scale itself)
+COSSERAT_GA0 = 15.0    # shear number  GA_ref·L²/EI_ref
+COSSERAT_EA0 = 15.0    # axial number  EA_ref·L²/EI_ref
+COSSERAT_PX = 2.5      # tip force, axial component  (P·L²/EI_ref, dimensionless)
+COSSERAT_PY = -4.0     # tip force, transverse component (downward)
+
+
+def _solve_cosserat_planar_bvp(ei: float, ga: float, ea: float,
+                               Px: float, Py: float, n_nodes: int = 201):
+    """Solve the geometrically-exact planar Cosserat (Simo-Reissner) rod BVP.
+
+    Tip-loaded cantilever, no distributed load → the internal force is constant
+    and equal to the applied tip load ``(Px, Py)``. First-order state
+    ``(x, y, θ, M)`` on ``s̃ ∈ [0, 1]``::
+
+        x' = ν cosθ − η sinθ,     ν = 1 + (Px cosθ + Py sinθ)/ea   (axial stretch)
+        y' = ν sinθ + η cosθ,     η = (−Px sinθ + Py cosθ)/ga      (shear)
+        θ' = M/ei                                                  (curvature)
+        M' = −(x' Py − y' Px)                                      (moment balance)
+
+    BCs: clamped root ``x(0)=y(0)=θ(0)=0`` and moment-free tip ``M(1)=0``.
+    Returns the ``solve_bvp`` interpolant ``sol.sol``.
+    """
+    def ode(s, Y):
+        x, y, th, M = Y
+        nu = 1.0 + (Px * np.cos(th) + Py * np.sin(th)) / ea
+        eta = (-Px * np.sin(th) + Py * np.cos(th)) / ga
+        xp = nu * np.cos(th) - eta * np.sin(th)
+        yp = nu * np.sin(th) + eta * np.cos(th)
+        thp = M / ei
+        Mp = -(xp * Py - yp * Px)
+        return np.vstack([xp, yp, thp, Mp])
+
+    def bc(Ya, Yb):
+        return np.array([Ya[0], Ya[1], Ya[2], Yb[3]])
+
+    s = np.linspace(0.0, 1.0, n_nodes)
+    Y0 = np.zeros((4, s.size))
+    Y0[2] = 0.3 * s   # small linear seed for θ
+    sol = solve_bvp(ode, bc, s, Y0, max_nodes=80000, tol=1e-9)
+    if not sol.success:
+        raise RuntimeError(
+            f"Cosserat BVP failed (ei={ei}, ga={ga}, ea={ea}): {sol.message}")
+    return sol
+
+
+def generate_planar_cosserat(
+    EI_unit: float = 1.0,
+    GA_unit: float = 1.0,
+    EA_unit: float = 1.0,
+    EI0: float = COSSERAT_EI0,
+    GA0: float = COSSERAT_GA0,
+    EA0: float = COSSERAT_EA0,
+    Px: float = COSSERAT_PX,
+    Py: float = COSSERAT_PY,
+    n_sensors: int = 41,
+    pos_noise_std: float = 5e-4,
+    ang_noise_std: float = 5e-3,
+    seed: int = 0,
+):
+    """Full planar Cosserat rod inverse: recover **three** dimensionless
+    stiffnesses — bending ``EI_unit``, shear ``GA_unit``, axial ``EA_unit`` —
+    from the measured deformed shape ``(x, y)`` and cross-section orientation
+    ``θ`` of a tip-loaded soft rod.
+
+    This is the geometrically-exact Simo-Reissner planar rod: unlike
+    ``planar_elastica`` (inextensible, unshearable — bending only), the
+    cross-section here can **shear** (θ ≠ tangent angle) and the centerline can
+    **extend**. At the default thick/soft setup the rod develops ~7-27% shear
+    strain and ~17-31% axial strain (plus a ~45° tip rotation), so all three
+    stiffnesses leave a strong signature in the shape — large enough that the
+    network can't "explain them away" within the sensor-noise latitude.
+
+    The unknowns are dimensionless multipliers (truth = 1.0 each) on reference
+    stiffness numbers ``EI0, GA0, EA0`` (= stiffness·L²/EI_ref). The template
+    residuals isolate one unknown apiece:
+
+      * axial constitutive  ``EA0·EA_unit·(x'cosθ + y'sinθ − 1) = Px cosθ + Py sinθ``
+      * shear constitutive   ``GA0·GA_unit·(−x'sinθ + y'cosθ) = −Px sinθ + Py cosθ``
+      * moment balance       ``EI0·EI_unit·θ'' + (Py x' − Px y') = 0``
+
+    Ground truth from :func:`_solve_cosserat_planar_bvp`. Sensors measure
+    ``x(s̃), y(s̃), θ(s̃)`` (position markers + IMU/orientation), plus the
+    clamped-root BCs as noise-free pseudo-sensors.
+
+    Returns ``(data, truth)`` with sensors ``x_meas, y_meas, theta_meas`` and
+    the clamped-root pseudo-sensors ``x_bc, y_bc, theta_bc``.
+    """
+    rng = np.random.default_rng(seed)
+    ei = EI0 * float(EI_unit)
+    ga = GA0 * float(GA_unit)
+    ea = EA0 * float(EA_unit)
+    sol = _solve_cosserat_planar_bvp(ei, ga, ea, Px, Py)
+
+    s = np.linspace(0.0, 1.0, n_sensors)
+    x, y, th, _M = sol.sol(s)
+    x_n = x + rng.normal(0.0, pos_noise_std, size=x.shape)
+    y_n = y + rng.normal(0.0, pos_noise_std, size=y.shape)
+    th_n = th + rng.normal(0.0, ang_noise_std, size=th.shape)
+
+    s_bc = np.array([0.0], dtype=np.float64)
+    zero = np.array([0.0], dtype=np.float64)
+    return (
+        {
+            "x_meas":     (s.astype(np.float32), x_n.astype(np.float32)),
+            "y_meas":     (s.astype(np.float32), y_n.astype(np.float32)),
+            "theta_meas": (s.astype(np.float32), th_n.astype(np.float32)),
+            "x_bc":       (s_bc.astype(np.float32), zero.astype(np.float32)),
+            "y_bc":       (s_bc.astype(np.float32), zero.astype(np.float32)),
+            "theta_bc":   (s_bc.astype(np.float32), zero.astype(np.float32)),
+        },
+        {"EI_unit": float(EI_unit), "GA_unit": float(GA_unit), "EA_unit": float(EA_unit)},
+    )

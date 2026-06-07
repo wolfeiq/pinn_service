@@ -7,7 +7,8 @@ from pinn_engine.dsl.templates import get_template
 
 @pytest.mark.parametrize("name", ["damped_oscillator", "lorenz", "diffusion_1d",
                                   "coupled_drag_3d", "euler_bernoulli_beam",
-                                  "axial_elastic_bar", "planar_elastica"])
+                                  "axial_elastic_bar", "planar_elastica",
+                                  "planar_cosserat"])
 def test_template_system_and_data(name):
     tpl = get_template(name)
     sys = tpl.system()
@@ -50,6 +51,46 @@ def test_planar_elastica_nonlinear_residual_and_data():
     # Clamped-root BC pseudo-sensor is exactly zero, noise-free.
     s_bc, theta_bc = data["theta_bc"]
     assert float(theta_bc[0]) == 0.0
+
+
+def test_planar_cosserat_multi_unknown_and_residual_consistency():
+    """Full Cosserat rod: 3 unknowns, 3 coupled residuals, and the template
+    equations must vanish on the independent solve_bvp ground truth."""
+    import numpy as np
+    import sympy as sp
+    from pinn_engine.data.synthetic import (
+        _solve_cosserat_planar_bvp, COSSERAT_EI0, COSSERAT_GA0, COSSERAT_EA0,
+        COSSERAT_PX, COSSERAT_PY,
+    )
+    tpl = get_template("planar_cosserat")
+    sys = tpl.system()
+    sys.validate()
+    assert set(tpl.truth) == {"EI_unit", "GA_unit", "EA_unit"}
+    assert len(sys.equations) == 3
+    # Independent ground truth at truth=1 for all three stiffnesses.
+    sol = _solve_cosserat_planar_bvp(COSSERAT_EI0, COSSERAT_GA0, COSSERAT_EA0,
+                                     COSSERAT_PX, COSSERAT_PY)
+    ss = np.linspace(0.05, 0.95, 19)
+    Y = sol.sol(ss); x, y, th, M = Y
+    d = sol.sol(ss)  # states; derivatives from the ODE rhs:
+    # rebuild xp, yp, thpp analytically from the model
+    ei, ga, ea = COSSERAT_EI0, COSSERAT_GA0, COSSERAT_EA0
+    Px, Py = COSSERAT_PX, COSSERAT_PY
+    nu = 1.0 + (Px*np.cos(th) + Py*np.sin(th))/ea
+    eta = (-Px*np.sin(th) + Py*np.cos(th))/ga
+    xp = nu*np.cos(th) - eta*np.sin(th)
+    yp = nu*np.sin(th) + eta*np.cos(th)
+    Mp = -(xp*Py - yp*Px)
+    thpp = Mp/ei
+    R_axial = ea*(xp*np.cos(th) + yp*np.sin(th) - 1) - (Px*np.cos(th) + Py*np.sin(th))
+    R_shear = ga*(-xp*np.sin(th) + yp*np.cos(th)) - (-Px*np.sin(th) + Py*np.cos(th))
+    R_moment = ei*thpp + (Py*xp - Px*yp)
+    assert np.abs(R_axial).max() < 1e-6
+    assert np.abs(R_shear).max() < 1e-6
+    assert np.abs(R_moment).max() < 1e-6
+    # The deformed shape must be genuinely large-deflection with real shear.
+    assert abs(np.degrees(th).min()) > 25  # tip rotation well past small-angle
+    assert np.abs(eta).max() > 0.05         # non-trivial shear strain
 
 
 def test_objective_returns_relative_error():

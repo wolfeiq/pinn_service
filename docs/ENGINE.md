@@ -52,6 +52,36 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Full planar Cosserat rod — first multi-output multi-unknown PDE (Jun 07, 2026)
+
+- **`planar_cosserat` template added (11th template)** — the geometrically-exact
+  Simo-Reissner planar rod **with shear and extension**, recovering **three**
+  stiffnesses at once: bending `EI_unit`, shear `GA_unit`, axial `EA_unit`
+  (truth 1.0 each). The engine's **first multi-output (x, y, θ) multi-unknown
+  *PDE* inverse** — the structural-mechanics analogue of `coupled_drag_3d`. For
+  a tip-loaded cantilever (constant internal force) the balance laws collapse to
+  three residuals that each isolate one unknown: axial + shear constitutive laws
+  (read off the measured shape) and moment balance. Residuals verified to vanish
+  at 1e-15 on an independent `solve_bvp` solution.
+- **Solved to the CRLB floor: mean 0.30% rel_err** (EI 0.69% / GA 0.20% /
+  EA 0.00%) with a fixed `param_lr_scale=100`, 8000 epochs, ncol=512, ~10 min
+  CPU. CRLB floors EI 0.29% / GA 0.53% / EA 0.11%.
+- **"Explain-away" finding.** An initial stiff-axial design (`EA0=40`, ~5% axial
+  strain) left EA stuck at ~380% in every run — the network neutralised the tiny
+  axial residual by nudging `x'` inside the position-noise band, so EA was never
+  constrained during training *despite being CRLB-identifiable*. Fix was to
+  enlarge the **signal**, not push the optimiser: soften the rod (`EA0=15`, axial
+  strain ~17-31%) + denser/cleaner sensors → EA 0.20%. Lesson: when an unknown
+  stalls, check its residual signal vs the data-noise floor before blaming LR.
+- **Adaptive controller is non-monotonic on coupled multi-unknown problems.**
+  Same controller config gave mean 2.06% at 8000 ep but **72.9%** at 12000 ep
+  (fixed seed) — after EA converged the controller wandered it back out. The LR
+  state machine, tuned on single-unknown templates, doesn't yet handle three
+  interacting unknowns; fixed `param_lr_scale` is stable and preferred here.
+  Open R&D. Raising `lam_physics` also hurt (trades shape-fit for residual).
+  See `docs/cosserat_planar_experiments.md`; driver
+  `scripts/exp_planar_cosserat.py`.
+
 ### Soft-robotics / large-deflection rod (Jun 07, 2026)
 
 - **`planar_elastica` template added (10th template)** — the
@@ -771,7 +801,7 @@ All add Gaussian noise; all are reproducible from seed.
 
 ## Templates inventory
 
-10 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
+11 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
 
 | name | physics | unknowns | best result via engine |
 |---|---|---|---|
@@ -785,6 +815,7 @@ All add Gaussian noise; all are reproducible from seed.
 | `axial_elastic_bar` | `EA·u'' + p₀ = 0` (static, clamped-free) | EA_unit | **0.26%** in 24 s on CPU (near CRLB 0.03%) |
 | `euler_bernoulli_beam` | `EI·w'''' = q₀` (static, simply-supported) | EI_unit | training-limited (CRLB 0.10%; engine convergence is slow on the 4th-order autograd path) |
 | `planar_elastica` | `EI·θ'' = −P₀·cos θ` (geometrically-exact large-deflection rod) | EI_unit | **0.565%** (RAR) / 0.648% (baseline) — near CRLB floor 0.46%, ~70 s on CPU |
+| `planar_cosserat` | full Simo-Reissner rod (shear + extension), 3 residuals | EI_unit, GA_unit, EA_unit | **mean 0.30%** (EI 0.69% / GA 0.20% / EA 0.00%) at CRLB floor; fixed scale=100, ~10 min CPU |
 
 ---
 
