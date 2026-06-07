@@ -11,9 +11,17 @@ from pinn_engine.baselines.cosserat_force_id import (
     recover_from_template_data,
     CosseratForceIDResult,
 )
+from pinn_engine.baselines.spatial_cosserat_id import (
+    simulate_spatial_cosserat,
+    generate_spatial_cosserat,
+    recover_spatial_stiffness,
+    SpatialCosseratIDResult,
+)
 
 __all__ = [
     "EKFInverseDampedOscillator", "run_ekf_baseline",
     "recover_stiffness_from_motion", "recover_from_template_data",
     "CosseratForceIDResult",
+    "simulate_spatial_cosserat", "generate_spatial_cosserat",
+    "recover_spatial_stiffness", "SpatialCosseratIDResult",
 ]

@@ -165,6 +165,51 @@ def test_cosserat_force_id_recovers_all_three_stiffnesses():
     assert abs(r["EA_unit"] - 1.0) < 0.10
 
 
+def test_spatial_cosserat_3d_recovers_six_stiffnesses():
+    """Full 3-D spatial Cosserat rod: recover all six stiffnesses (axial, two
+    shear, torsion, two bending) from measured shape + orientation."""
+    import numpy as np
+    from pinn_engine.baselines import (generate_spatial_cosserat,
+                                       recover_spatial_stiffness)
+    names = ["EA_unit", "GA1_unit", "GA2_unit", "EI1_unit", "EI2_unit", "GJ_unit"]
+    # Clean data → near-exact recovery of all six.
+    data, truth = generate_spatial_cosserat(n_s=121, pos_noise_std=0.0,
+                                            quat_noise_std=0.0, seed=0)
+    r = recover_spatial_stiffness(data).as_dict()
+    for k in names:
+        assert abs(r[k] - 1.0) < 0.02, (k, r[k])
+    # Recovers an arbitrary (non-unity) stiffness, not just truth=1.
+    data2, _ = generate_spatial_cosserat(n_s=121, pos_noise_std=0.0,
+                                         quat_noise_std=0.0, EA_unit=1.3,
+                                         GJ_unit=0.7, EI1_unit=1.2)
+    r2 = recover_spatial_stiffness(data2).units
+    assert abs(r2["EA_unit"] - 1.3) < 0.03
+    assert abs(r2["GJ_unit"] - 0.7) < 0.03
+    assert abs(r2["EI1_unit"] - 1.2) < 0.03
+    # Noisy data → all six still within single-digit %.
+    data3, _ = generate_spatial_cosserat(n_s=121, pos_noise_std=1e-3,
+                                         quat_noise_std=3e-3, seed=0)
+    r3 = recover_spatial_stiffness(data3).as_dict()
+    for k in names:
+        assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
+
+
+def test_spatial_cosserat_solver_analytic_limits():
+    """Forward solver matches closed-form limits: axial stretch, pure twist."""
+    import numpy as np
+    from pinn_engine.baselines import simulate_spatial_cosserat
+    stiff = {"EA": 15.0, "GA1": 15.0, "GA2": 12.0, "GJ": 0.8, "EI1": 1.0, "EI2": 0.8}
+    # Pure axial force → uniform stretch tip x = 1 + P/EA, no lateral motion.
+    s, r, q = simulate_spatial_cosserat(stiff, P=(2.0, 0, 0), Mt=(0, 0, 0))
+    assert abs(r[-1, 0] - (1 + 2.0 / 15.0)) < 1e-3
+    assert abs(r[-1, 1]) < 1e-4 and abs(r[-1, 2]) < 1e-4
+    # Pure axial twist moment → straight rod, tip rotation Mt1/GJ about x.
+    s, r, q = simulate_spatial_cosserat(stiff, P=(0, 0, 0), Mt=(0.3, 0, 0))
+    twist = 2 * np.arctan2(q[-1, 1], q[-1, 0])
+    assert abs(twist - 0.3 / 0.8) < 1e-2
+    assert abs(r[-1, 1]) < 1e-3 and abs(r[-1, 2]) < 1e-3
+
+
 def test_objective_returns_relative_error():
     tpl = get_template("damped_oscillator")
 

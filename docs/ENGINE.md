@@ -52,6 +52,28 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### 3-D spatial Cosserat rod — full continuum-manipulator model (Jun 07, 2026)
+
+- **`spatial_cosserat_id` — the full geometrically-exact 3-D rod** (Simo-Reissner),
+  the model real continuum manipulators need: bending in two planes, two shears,
+  extension, and **torsion** — six strains, six stiffnesses
+  (EA, GA1, GA2, EI1, EI2, GJ). Centerline `r(s)∈ℝ³` + orientation `R(s)∈SO(3)`
+  (quaternion). Forward BVP solver (`simulate_spatial_cosserat`) verified against
+  closed-form limits: pure axial → stretch `1+P/EA`; pure twist → tip rotation
+  `Mt₁/GJ`; transverse → planar elastica; quaternion norm holds to 1.0.
+- **Recovers all six stiffnesses** (`recover_spatial_stiffness`) from measured
+  shape + orientation: a tip-loaded cantilever is statically determinate, so the
+  internal force/moment follow from the measured shape + known tip wrench
+  (independent of the unknowns), making the constitutive law a linear regression.
+  Clean: exact (0.0%); standard noise (pos 1e-3, quat 3e-3): **EA 0.2% / GA1 0.7%
+  / GA2 0.5% / EI1 3.0% / EI2 0.5% / GJ 1.4%**. Recovers arbitrary non-unit
+  stiffness too (e.g. EA=1.3, GJ=0.7 → exact). This is the 3-D generalisation of
+  the force-from-motion identifier — the recurring lesson: expose a stiffness
+  against a data-derived force/moment rather than an under-resolved PINN residual.
+  See `docs/spatial_cosserat_experiments.md`; demo `scripts/exp_spatial_cosserat.py`.
+  (Static 3-D; actuation / hyperelastic-viscoelastic materials / dynamic-3-D
+  remain open for full soft-robotics coverage.)
+
 ### Dynamic Cosserat rod — first space-time multi-field inverse (Jun 07, 2026)
 
 - **`dynamic_cosserat` template added (12th template)** — the time-domain
