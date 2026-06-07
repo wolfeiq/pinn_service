@@ -23,6 +23,13 @@ from pinn_engine.baselines.dynamic_spatial_cosserat_id import (
     recover_dynamic_spatial_stiffness,
     DynamicSpatialIDResult,
 )
+from pinn_engine.baselines.tendon_actuated_id import (
+    actuation_wrench,
+    simulate_tendon_actuated,
+    generate_tendon_calibration,
+    recover_tendon_stiffness,
+    TendonCalibrationResult,
+)
 
 __all__ = [
     "EKFInverseDampedOscillator", "run_ekf_baseline",
@@ -32,4 +39,7 @@ __all__ = [
     "recover_spatial_stiffness", "SpatialCosseratIDResult",
     "simulate_dynamic_spatial_cosserat", "generate_dynamic_spatial_cosserat",
     "recover_dynamic_spatial_stiffness", "DynamicSpatialIDResult",
+    "actuation_wrench", "simulate_tendon_actuated",
+    "generate_tendon_calibration", "recover_tendon_stiffness",
+    "TendonCalibrationResult",
 ]

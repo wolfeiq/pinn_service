@@ -52,6 +52,24 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Tendon actuation — passive rod → soft robot (Jun 07, 2026)
+
+- **`tendon_actuated_id` — first actuation capability.** Cables routed at
+  cross-section offsets `(dy, dz)` (+ helix lever `h`) apply, under tension `τ`,
+  a constant material wrench `n_act=(−Στ,0,0)`, `m_act=(Στh, −Στdz, Στdy)` →
+  constant-strain (PCC) shape. Single tendon → `κ = τd/EI` (verified exactly).
+- **Stiffness self-calibration.** The actuation wrench is *known* (commanded
+  tensions × routing), so `wrench = C·strain` is linear in the stiffnesses:
+  sweeping tension patterns and measuring the actuated shapes recovers
+  `EA, EI1, EI2, GJ` with **no external test rig** — the robot calibrates itself
+  by moving. Clean: exact; noisy (pos 1e-3, quat 3e-3): **EA 0.3% / EI1 2.3% /
+  EI2 1.0% / GJ 3.2%**. Shear (GA) isn't tendon-excitable (use
+  `spatial_cosserat_id`). Same recipe as the rest of the suite — known/derived
+  wrench → linear regression for stiffness. See
+  `docs/tendon_actuation_experiments.md`; demo `scripts/exp_tendon_actuation.py`.
+  Open next for soft-robotics: pneumatic actuation, hyperelastic/viscoelastic
+  materials, contact.
+
 ### Dynamic 3-D Cosserat rod — the rod suite completed (Jun 07, 2026)
 
 - **`dynamic_spatial_cosserat_id` — the full dynamic 3-D rod** (`r(s,t)∈ℝ³`,

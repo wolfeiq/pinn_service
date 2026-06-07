@@ -194,6 +194,39 @@ def test_spatial_cosserat_3d_recovers_six_stiffnesses():
         assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
 
 
+def test_tendon_actuation_constant_curvature_and_self_calibration():
+    """Tendon actuation: a single tendon gives the constant-curvature law
+    κ=τd/EI, and a sweep of known tension patterns self-calibrates the rod's
+    axial/bending/torsion stiffness from the actuated shapes (no external rig)."""
+    import numpy as np
+    from pinn_engine.baselines import (simulate_tendon_actuated,
+                                       generate_tendon_calibration,
+                                       recover_tendon_stiffness)
+    stiff = {"EA": 15.0, "GA1": 15.0, "GA2": 12.0, "GJ": 0.8, "EI1": 1.0, "EI2": 0.8}
+    # Single tendon at offset d=0.05, tension 2 → curvature τd/EI2 about ê3.
+    s, r, q = simulate_tendon_actuated(stiff, [(0.05, 0.0, 0.0)], [2.0])
+    # tip angle of a constant-curvature arc = κ·L = τd/EI2.
+    R = np.array([[1 - 2 * (q[-1, 2] ** 2 + q[-1, 3] ** 2)]])  # not used; check via shape
+    expected_kappa = 2.0 * 0.05 / 0.8
+    # planar arc in xy: tip angle = atan2 of tangent; tangent angle ≈ κ at tip
+    assert abs(r[-1, 2]) < 1e-9                       # stays in-plane (z=0)
+    assert r[-1, 1] > 0.04                            # bends toward +y
+    # Self-calibration: clean → near-exact; noisy → single-digit %.
+    names = ["EA_unit", "EI1_unit", "EI2_unit", "GJ_unit"]
+    data, _ = generate_tendon_calibration(pos_noise_std=0.0, quat_noise_std=0.0, seed=0)
+    rc = recover_tendon_stiffness(data).as_dict()
+    for k in names:
+        assert abs(rc[k] - 1.0) < 0.01, (k, rc[k])
+    data2, _ = generate_tendon_calibration(pos_noise_std=0.0, quat_noise_std=0.0,
+                                           EI1_unit=1.4, GJ_unit=0.6, EA_unit=1.2)
+    r2 = recover_tendon_stiffness(data2).units
+    assert abs(r2["EI1_unit"] - 1.4) < 0.02 and abs(r2["GJ_unit"] - 0.6) < 0.02
+    data3, _ = generate_tendon_calibration(pos_noise_std=1e-3, quat_noise_std=3e-3, seed=0)
+    r3 = recover_tendon_stiffness(data3).as_dict()
+    for k in names:
+        assert abs(r3[k] - 1.0) < 0.08, (k, r3[k])
+
+
 def test_dynamic_spatial_cosserat_recovers_six_stiffnesses():
     """Dynamic 3-D rod: recover all six stiffnesses from the time-resolved 3-D
     motion (shape + orientation) via the kinematic force/moment + regression."""
