@@ -194,6 +194,58 @@ def test_spatial_cosserat_3d_recovers_six_stiffnesses():
         assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
 
 
+def test_dynamic_spatial_cosserat_recovers_six_stiffnesses():
+    """Dynamic 3-D rod: recover all six stiffnesses from the time-resolved 3-D
+    motion (shape + orientation) via the kinematic force/moment + regression."""
+    from pinn_engine.baselines import (generate_dynamic_spatial_cosserat,
+                                       recover_dynamic_spatial_stiffness)
+    names = ["EA_unit", "GA1_unit", "GA2_unit", "EI1_unit", "EI2_unit", "GJ_unit"]
+    # Coarse grid for test speed; bounds are loose (finer grids reach ~5%).
+    data, truth = generate_dynamic_spatial_cosserat(N=32, n_t=101, pos_noise_std=1e-3,
+                                                    quat_noise_std=3e-3, seed=0)
+    r = recover_dynamic_spatial_stiffness(data).as_dict()
+    for k in ["GA1_unit", "GA2_unit", "EI1_unit", "EI2_unit"]:
+        assert abs(r[k] - 1.0) < 0.10, (k, r[k])
+    # axial (EA) and torsion (GJ) are the smoothing-sensitive axial-direction modes
+    assert abs(r["EA_unit"] - 1.0) < 0.15, r["EA_unit"]
+    assert abs(r["GJ_unit"] - 1.0) < 0.15, r["GJ_unit"]
+
+
+def test_dynamic_spatial_cosserat_solver_energy_and_planar_reduction():
+    """Forward solver: undamped energy ~conserved, and an in-plane isotropic
+    load stays in-plane (z=0) — the planar reduction."""
+    import numpy as np
+    from pinn_engine.baselines import simulate_dynamic_spatial_cosserat
+    stiff = {"EA": 15.0, "GA1": 15.0, "GA2": 15.0, "GJ": 0.8, "EI1": 1.0, "EI2": 1.0}
+    Jr = (0.02, 0.01, 0.01)
+    # In-plane gravity, isotropic, no pre-twist -> motion confined to xy (z=0).
+    s, t, r, q = simulate_dynamic_spatial_cosserat(
+        stiff, Jrho=Jr, gvec=(0, -3, 0), c=0.0, twist0=0.0, N=24, t_end=1.5, n_t=80)
+    assert np.abs(r[:, :, 2]).max() < 1e-6        # z stays zero
+    assert r[-1, :, 1].min() < -0.2               # tip droops in -y
+
+    # Undamped energy conservation (small relative to the PE<->KE exchange).
+    nn = r.shape[0]; ds = s[1] - s[0]
+    Cn = np.array([15., 15., 15.]); Cm = np.array([0.8, 1., 1.]); Jr_ = np.array(Jr)
+    from pinn_engine.baselines.spatial_cosserat_id import _Rmat, _qmul, _E1
+    v = np.gradient(r, t, axis=1)
+    E = []
+    for k in range(r.shape[1]):
+        mass = np.full(nn, ds); mass[-1] = ds / 2; mass[0] = 0.0
+        ke = 0.5 * np.sum(mass[:, None] * v[:, k] ** 2)
+        pe = 0.0
+        for e in range(nn - 1):
+            qm = q[e, k] + q[e + 1, k]; qm /= np.linalg.norm(qm); R = _Rmat(qm)
+            G = R.T @ ((r[e + 1, k] - r[e, k]) / ds) - _E1
+            qc = np.array([q[e, k][0], -q[e, k][1], -q[e, k][2], -q[e, k][3]])
+            K = 2 * _qmul(qc, q[e + 1, k])[1:] / ds
+            pe += 0.5 * ds * (np.sum(Cn * G * G) + np.sum(Cm * K * K))
+        grav = -np.sum(mass * (r[:, k] @ np.array([0, -3., 0])))
+        E.append(ke + pe + grav)
+    E = np.array(E)
+    assert (E.max() - E.min()) < 0.05            # conserved vs PE<->KE swing ~2.4
+
+
 def test_spatial_cosserat_solver_analytic_limits():
     """Forward solver matches closed-form limits: axial stretch, pure twist."""
     import numpy as np

@@ -52,6 +52,28 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Dynamic 3-D Cosserat rod — the rod suite completed (Jun 07, 2026)
+
+- **`dynamic_spatial_cosserat_id` — the full dynamic 3-D rod** (`r(s,t)∈ℝ³`,
+  `R(s,t)∈SO(3)` with inertia + 3-D rotational dynamics incl. the gyroscopic
+  term), unifying the time-domain and spatial rods. Method-of-lines forward
+  solver verified: undamped energy conserved; **reproduces the planar dynamic
+  solver to ~1e-4**; in-plane isotropic load stays planar; off-axis + pre-twist
+  gives genuine out-of-plane motion + dynamic torsion.
+- **Recovers all six stiffnesses from 3-D motion** — in dynamics both the
+  internal force *and* moment are kinematic (`n_sp` from accelerations, `m_sp`
+  from the angular-momentum rate `dH/dt`), so the constitutive law is a linear
+  regression. A **pre-twist** conditions torsion (GJ). Noisy motion (pos 1e-3,
+  quat 3e-3, N=50): **EA 4.3% / GA1 2.3% / GA2 1.0% / EI1 1.3% / EI2 2.0% /
+  GJ 3.3%**. See `docs/dynamic_spatial_cosserat_experiments.md`; demo
+  `scripts/exp_dynamic_spatial_cosserat.py`.
+- **The rod suite is now complete across geometry × time** (planar/3-D ×
+  static/dynamic). The unifying recipe throughout: expose each stiffness against
+  a statically-determinate or inertia-derived internal force/moment, turning the
+  inverse into a well-conditioned linear regression rather than fighting an
+  under-resolved high-order PINN residual. Open for full soft-robotics:
+  actuation (tendon/pneumatic), hyperelastic/viscoelastic materials, contact.
+
 ### 3-D spatial Cosserat rod — full continuum-manipulator model (Jun 07, 2026)
 
 - **`spatial_cosserat_id` — the full geometrically-exact 3-D rod** (Simo-Reissner),
