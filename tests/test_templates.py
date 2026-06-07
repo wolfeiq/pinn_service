@@ -8,7 +8,7 @@ from pinn_engine.dsl.templates import get_template
 @pytest.mark.parametrize("name", ["damped_oscillator", "lorenz", "diffusion_1d",
                                   "coupled_drag_3d", "euler_bernoulli_beam",
                                   "axial_elastic_bar", "planar_elastica",
-                                  "planar_cosserat"])
+                                  "planar_cosserat", "dynamic_cosserat"])
 def test_template_system_and_data(name):
     tpl = get_template(name)
     sys = tpl.system()
@@ -91,6 +91,63 @@ def test_planar_cosserat_multi_unknown_and_residual_consistency():
     # The deformed shape must be genuinely large-deflection with real shear.
     assert abs(np.degrees(th).min()) > 25  # tip rotation well past small-angle
     assert np.abs(eta).max() > 0.05         # non-trivial shear strain
+
+
+def test_dynamic_cosserat_solver_energy_and_static_limit():
+    """The dynamic-rod forward solver must conserve energy when undamped and
+    relax to the static gravity-loaded shape when damped — the two checks that
+    validate it as ground truth for the inverse template."""
+    import numpy as np
+    from pinn_engine.data.synthetic import (
+        _simulate_dynamic_cosserat, DYNCOS_EI0, DYNCOS_GA0, DYNCOS_EA0,
+        DYNCOS_G, DYNCOS_J,
+    )
+    ei, ga, ea, g, j = DYNCOS_EI0, DYNCOS_GA0, DYNCOS_EA0, DYNCOS_G, DYNCOS_J
+    N = 40
+    # Undamped: total energy (KE + elastic + gravity PE) ~ conserved.
+    s, t, X, Y, TH = _simulate_dynamic_cosserat(ei, ga, ea, g, c=0.0, j=j,
+                                                N=N, t_end=2.0, n_t=120)
+    ds = s[1] - s[0]
+    # finite-difference velocities in time
+    Vx = np.gradient(X, t, axis=0); Vy = np.gradient(Y, t, axis=0)
+    Om = np.gradient(TH, t, axis=0)
+    mass = np.full(N + 1, ds); mass[-1] = ds / 2; mass[0] = 0.0
+    E = []
+    for k in range(X.shape[0]):
+        x, y, th = X[k], Y[k], TH[k]
+        ke = 0.5 * np.sum(mass * (Vx[k]**2 + Vy[k]**2)) + 0.5 * np.sum(mass * j * Om[k]**2)
+        dxs = (x[1:]-x[:-1])/ds; dys = (y[1:]-y[:-1])/ds
+        the = (th[:-1]+th[1:])/2; dth = (th[1:]-th[:-1])/ds
+        nu = dxs*np.cos(the)+dys*np.sin(the); eta = -dxs*np.sin(the)+dys*np.cos(the)
+        pe = 0.5*ds*np.sum(ea*(nu-1)**2 + ga*eta**2 + ei*dth**2)
+        grav = g*np.sum(mass*y)
+        E.append(ke + pe + grav)
+    E = np.array(E)
+    # FD velocities add a little noise; drift should still be a small fraction.
+    assert np.abs(E - E[0]).max() / max(abs(E[0]), 1.0) < 0.05
+
+    # Damped: relaxes to the static gravity-loaded equilibrium (compare to a
+    # heavily-damped long run's steady state — must be a smooth, monotone droop).
+    s2, t2, X2, Y2, TH2 = _simulate_dynamic_cosserat(ei, ga, ea, g, c=3.0, j=j,
+                                                     N=N, t_end=15.0, n_t=30)
+    tip_y = Y2[-1, -1]
+    assert tip_y < -0.1                       # droops downward
+    assert abs(np.degrees(TH2[-1, -1])) > 15  # genuinely large deflection
+    # steady: velocity (last vs second-last frame) is small
+    assert np.abs(Y2[-1] - Y2[-2]).max() < 1e-2
+
+
+def test_dynamic_cosserat_template_shape():
+    tpl = get_template("dynamic_cosserat")
+    sys = tpl.system(); sys.validate()
+    comp = sys.compile()
+    assert comp.input_names == ("s", "t")        # space-first space-time domain
+    assert len(sys.equations) == 3 and len(sys.state) == 3
+    assert set(tpl.truth) == {"EI_unit", "GA_unit", "EA_unit"}
+    data, _ = tpl.synthetic_data(seed=0)
+    for name in ("x_meas", "y_meas", "theta_meas"):
+        inp, tgt = data[name]
+        assert inp.shape[1] == 2 and inp.shape[0] == tgt.shape[0]
 
 
 def test_objective_returns_relative_error():

@@ -10,5 +10,6 @@ from pinn_engine.dsl.templates_lib import (
     euler_bernoulli_beam,
     axial_elastic_bar,
     planar_elastica,
-    planar_cosserat,  # noqa: F401
+    planar_cosserat,
+    dynamic_cosserat,  # noqa: F401
 )  # noqa: F401

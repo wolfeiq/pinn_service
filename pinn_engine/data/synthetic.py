@@ -665,3 +665,159 @@ def generate_planar_cosserat(
         },
         {"EI_unit": float(EI_unit), "GA_unit": float(GA_unit), "EA_unit": float(EA_unit)},
     )
+
+
+# -------------------------------------------------------------- dynamic planar Cosserat rod (time-domain)
+
+
+# Dynamic-rod reference numbers, gravity load, damping, rotary inertia. Soft rod
+# released from horizontal under a DISTRIBUTED gravity load (no concentrated tip
+# force — that would shock-excite fast axial/shear waves at the near-massless end
+# node). Light damping keeps the large-deflection swing's strains moderate.
+DYNCOS_EI0 = 1.0       # bending number
+DYNCOS_GA0 = 15.0      # shear number
+DYNCOS_EA0 = 15.0      # axial number
+DYNCOS_G = 3.0         # distributed gravity (force per unit length, downward)
+DYNCOS_C = 0.4         # translational viscous damping coefficient
+DYNCOS_J = 0.01        # dimensionless rotary inertia ρI/(ρA·L²)
+DYNCOS_TEND = 2.5      # time horizon (~1.3 bending periods; settling tail trimmed)
+
+
+def _simulate_dynamic_cosserat(ei, ga, ea, g, c, j, N=60, t_end=DYNCOS_TEND,
+                               n_t=81):
+    """Method-of-lines forward simulation of the dynamic planar Cosserat rod.
+
+    Clamped at ``s=0``, free at the tip, under a distributed gravity load
+    ``(0, −g)`` per unit length; released from the straight horizontal
+    configuration at rest. Staggered finite differences in ``s`` (forces/strains
+    at element midpoints, divergence at nodes) + adaptive RK45 in time.
+    Translational viscous damping ``c``; rotary inertia ``j``.
+
+    Verified (see test): undamped energy conserved to ~1e-7, and the damped
+    steady state reproduces the static gravity-loaded rod shape to ~1e-5.
+    Gravity (not a tip point load) keeps the max acceleration O(g) — no
+    boundary-node spike. Returns ``(s_nodes, t_grid, X, Y, TH)`` with arrays
+    shaped ``(n_t, N+1)``.
+    """
+    ds = 1.0 / N
+    nn = N + 1
+    s = np.linspace(0.0, 1.0, nn)
+    Y0 = np.concatenate([s.copy(), np.zeros(nn), np.zeros(nn), np.zeros(3 * nn)])
+    mass = np.full(nn, ds); mass[N] = ds / 2; massj = mass * j
+
+    def deriv(t, Y):
+        x = Y[0:nn].copy(); y = Y[nn:2*nn].copy(); th = Y[2*nn:3*nn].copy()
+        vx = Y[3*nn:4*nn].copy(); vy = Y[4*nn:5*nn].copy(); om = Y[5*nn:6*nn].copy()
+        x[0] = y[0] = th[0] = vx[0] = vy[0] = om[0] = 0.0
+        dxs = (x[1:]-x[:-1])/ds; dys = (y[1:]-y[:-1])/ds
+        the = (th[:-1]+th[1:])/2; dth = (th[1:]-th[:-1])/ds
+        nu = dxs*np.cos(the)+dys*np.sin(the); eta = -dxs*np.sin(the)+dys*np.cos(the)
+        n1 = ea*(nu-1); n2 = ga*eta
+        Nx = n1*np.cos(the)-n2*np.sin(the); Ny = n1*np.sin(the)+n2*np.cos(the); m = ei*dth
+        ax = np.zeros(nn); ay = np.zeros(nn); al = np.zeros(nn)
+        for i in range(1, N):
+            ax[i] = (Nx[i]-Nx[i-1])/mass[i] - c*vx[i]
+            ay[i] = (Ny[i]-Ny[i-1])/mass[i] - g - c*vy[i]
+            Tq = (m[i]-m[i-1]) + ds*0.5*((dxs[i]*Ny[i]-dys[i]*Nx[i])
+                                         + (dxs[i-1]*Ny[i-1]-dys[i-1]*Nx[i-1]))
+            al[i] = Tq/massj[i]
+        # Free tip: ghost element force = 0 (no tip load).
+        ax[N] = (0.0-Nx[N-1])/mass[N] - c*vx[N]
+        ay[N] = (0.0-Ny[N-1])/mass[N] - g - c*vy[N]
+        al[N] = ((0.0-m[N-1]) + ds*0.5*(dxs[N-1]*Ny[N-1]-dys[N-1]*Nx[N-1]))/massj[N]
+        ax[0] = ay[0] = al[0] = 0.0
+        return np.concatenate([vx, vy, om, ax, ay, al])
+
+    te = np.linspace(0.0, t_end, n_t)
+    sol = solve_ivp(deriv, (0.0, t_end), Y0, t_eval=te, method="RK45",
+                    rtol=1e-8, atol=1e-10, max_step=ds/np.sqrt(max(ea, ga))*2)
+    if not sol.success:
+        raise RuntimeError(f"dynamic Cosserat sim failed: {sol.message}")
+    X = sol.y[0:nn, :].T; Yc = sol.y[nn:2*nn, :].T; TH = sol.y[2*nn:3*nn, :].T
+    return s, te, X, Yc, TH
+
+
+def generate_dynamic_cosserat(
+    EI_unit: float = 1.0,
+    GA_unit: float = 1.0,
+    EA_unit: float = 1.0,
+    EI0: float = DYNCOS_EI0,
+    GA0: float = DYNCOS_GA0,
+    EA0: float = DYNCOS_EA0,
+    g: float = DYNCOS_G,
+    c: float = DYNCOS_C,
+    j: float = DYNCOS_J,
+    t_end: float = DYNCOS_TEND,
+    n_s: int = 41,
+    n_t: int = 81,
+    pos_noise_std: float = 1e-3,
+    ang_noise_std: float = 5e-3,
+    seed: int = 0,
+):
+    """Dynamic planar Cosserat rod inverse: recover bending / shear / axial
+    stiffness from the **time-resolved** motion of a soft rod.
+
+    The dynamic (inertial) Simo-Reissner rod — the time-domain extension of
+    ``planar_cosserat``. A soft rod clamped at ``s=0`` is released from the
+    straight horizontal configuration under a distributed gravity load; it swings
+    down (~50° tip) and oscillates under light viscous damping, settling toward
+    the static droop. The measured space-time fields ``x(s,t), y(s,t), θ(s,t)``
+    encode the stiffnesses through the equations of motion (dimensionless)::
+
+        x_tt = ∂Nx/∂s − c·x_t
+        y_tt = ∂Ny/∂s − g − c·y_t
+        j·θ_tt = EI·θ_ss + (x_s·Ny − y_s·Nx)
+
+    with the constitutive forces ``Nx, Ny`` from the same axial/shear laws as the
+    static template. Ground truth from a verified method-of-lines solver
+    (:func:`_simulate_dynamic_cosserat`). The motion keeps axial strain ≲0.16 and
+    shear ≲0.34 with max acceleration O(g) — large enough to identify GA, EA,
+    gentle enough for the linear constitutive law and tractable for a PINN.
+
+    Sensors: noisy ``x, y, θ`` on an ``n_s × n_t`` space-time grid, plus
+    clamped-root and initial-shape pseudo-sensors (noise-free). The auxiliary
+    force fields ``Nx, Ny`` are not measured — the template pins them via the
+    constitutive residuals.
+
+    Returns ``(data, truth)``. Interior/BC/IC inputs are ``(s, t)`` pairs.
+    """
+    rng = np.random.default_rng(seed)
+    ei = EI0*float(EI_unit); ga = GA0*float(GA_unit); ea = EA0*float(EA_unit)
+    # Solver resolution N must be a multiple of (n_s-1) so sensors sit on nodes.
+    N = (n_s - 1) * 3
+    s_nodes, t_grid, X, Yc, TH = _simulate_dynamic_cosserat(
+        ei, ga, ea, g, c, j, N=N, t_end=t_end, n_t=n_t)
+    idx = np.linspace(0, N, n_s, dtype=int)
+    s_sel = s_nodes[idx]
+
+    SS, TT = np.meshgrid(s_sel, t_grid, indexing="ij")   # (n_s, n_t)
+    inp = np.stack([SS.ravel(), TT.ravel()], axis=1)
+    # X is (n_t, nn); X[:, idx] -> (n_t, n_s); .T -> (n_s, n_t) to match SS layout.
+    xo = X[:, idx].T.ravel(); yo = Yc[:, idx].T.ravel(); to = TH[:, idx].T.ravel()
+    x_n = xo + rng.normal(0, pos_noise_std, xo.shape)
+    y_n = yo + rng.normal(0, pos_noise_std, yo.shape)
+    t_n = to + rng.normal(0, ang_noise_std, to.shape)
+
+    # Clamped-root BC: x=y=θ=0 at s=0 for every time (noise-free).
+    s0 = np.zeros_like(t_grid)
+    bc_in = np.stack([s0, t_grid], axis=1)
+    bc_zero = np.zeros_like(t_grid)
+    # Initial shape at t=0: straight horizontal x=s, y=0, θ=0 (noise-free).
+    ic_in = np.stack([s_sel, np.zeros_like(s_sel)], axis=1)
+    ic_x = s_sel.copy(); ic_y = np.zeros_like(s_sel); ic_th = np.zeros_like(s_sel)
+
+    f32 = lambda a: a.astype(np.float32)
+    return (
+        {
+            "x_meas":     (f32(inp), f32(x_n)),
+            "y_meas":     (f32(inp), f32(y_n)),
+            "theta_meas": (f32(inp), f32(t_n)),
+            "x_bc":       (f32(bc_in), f32(bc_zero)),
+            "y_bc":       (f32(bc_in), f32(bc_zero)),
+            "theta_bc":   (f32(bc_in), f32(bc_zero)),
+            "x_ic":       (f32(ic_in), f32(ic_x)),
+            "y_ic":       (f32(ic_in), f32(ic_y)),
+            "theta_ic":   (f32(ic_in), f32(ic_th)),
+        },
+        {"EI_unit": float(EI_unit), "GA_unit": float(GA_unit), "EA_unit": float(EA_unit)},
+    )

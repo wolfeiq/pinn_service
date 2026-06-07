@@ -105,7 +105,7 @@ to take pendulum from 19% to 0.43% (45× tighter) in one extra iteration.
 
 ## Bundled templates
 
-Eleven inverse-problem templates (see `docs/ENGINE.md` for full math + the best
+Twelve inverse-problem templates (see `docs/ENGINE.md` for full math + the best
 results achieved through the engine):
 
 | template | problem | unknowns |
@@ -121,6 +121,7 @@ results achieved through the engine):
 | `euler_bernoulli_beam` | `EI·w'''' = q₀` (linear beam bending) | EI_unit |
 | `planar_elastica` | `EI·θ'' = −P₀·cos θ` (large-deflection soft rod) | EI_unit |
 | `planar_cosserat` | full planar Cosserat rod (shear + extension) | EI_unit, GA_unit, EA_unit |
+| `dynamic_cosserat` | dynamic Cosserat rod (inertia + time, space-time PDE) | EI_unit, GA_unit, EA_unit |
 
 ## Engine features
 

@@ -52,6 +52,31 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Dynamic Cosserat rod — first space-time multi-field inverse (Jun 07, 2026)
+
+- **`dynamic_cosserat` template added (12th template)** — the time-domain
+  (inertial) geometrically-exact Simo-Reissner rod, recovering EI/GA/EA from the
+  **time-resolved motion** `x(s,t), y(s,t), θ(s,t)` of a soft rod swinging under
+  gravity. The engine's first **nonlinear PDE inverse over a 2-D space-time
+  domain**. Ships with a verified method-of-lines forward solver (undamped energy
+  conserved to ~1e-7; damped steady state reproduces the static rod to ~1e-5).
+- **EI (bending) recoverable (~7%); GA/EA (shear/axial) training-limited.** The
+  full 3-unknown inverse is an honest frontier result — CRLB floors are tiny
+  (EI 0.02% / GA 0.05% / EA 0.02%), so the gap is *training*, not
+  identifiability. Two findings worth keeping:
+  - **Auxiliary-force formulation gives the stiffnesses zero gradient.** Carrying
+    `Nx, Ny` as free outputs makes the constitutive residual `Nx = EA·(…)`
+    trivially satisfiable by `Nx` tracking `EA`. The fix — expand `∂Nx/∂s`
+    directly into 2nd derivatives of `x,y,θ` (programmatic chain rule) so the
+    stiffnesses sit in the data-anchored momentum residuals — is what makes EI
+    converge.
+  - **GA/EA signal lives in under-resolved translational 2nd derivatives**, so
+    the net explains the residual away within the sensor/noise latitude (dynamic
+    analogue of the static explain-away). Load choice is critical: a tip point
+    load shock-excites fast waves (accel ~180); distributed gravity (accel ~8) is
+    what makes it tractable. See `docs/dynamic_cosserat_experiments.md`; driver
+    `scripts/exp_dynamic_cosserat.py`.
+
 ### Full planar Cosserat rod — first multi-output multi-unknown PDE (Jun 07, 2026)
 
 - **`planar_cosserat` template added (11th template)** — the geometrically-exact
@@ -801,7 +826,7 @@ All add Gaussian noise; all are reproducible from seed.
 
 ## Templates inventory
 
-11 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
+12 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
 
 | name | physics | unknowns | best result via engine |
 |---|---|---|---|
@@ -816,6 +841,7 @@ All add Gaussian noise; all are reproducible from seed.
 | `euler_bernoulli_beam` | `EI·w'''' = q₀` (static, simply-supported) | EI_unit | training-limited (CRLB 0.10%; engine convergence is slow on the 4th-order autograd path) |
 | `planar_elastica` | `EI·θ'' = −P₀·cos θ` (geometrically-exact large-deflection rod) | EI_unit | **0.565%** (RAR) / 0.648% (baseline) — near CRLB floor 0.46%, ~70 s on CPU |
 | `planar_cosserat` | full Simo-Reissner rod (shear + extension), 3 residuals | EI_unit, GA_unit, EA_unit | **mean 0.30%** (EI 0.69% / GA 0.20% / EA 0.00%) at CRLB floor; fixed scale=100, ~10 min CPU |
+| `dynamic_cosserat` | **dynamic** Simo-Reissner rod (inertia + time), 2-D space-time | EI_unit, GA_unit, EA_unit | EI ~7% (recoverable); GA/EA training-limited — frontier (CRLB EI 0.02% / GA 0.05% / EA 0.02%) |
 
 ---
 
