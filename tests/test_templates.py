@@ -150,6 +150,21 @@ def test_dynamic_cosserat_template_shape():
         assert inp.shape[1] == 2 and inp.shape[0] == tgt.shape[0]
 
 
+def test_cosserat_force_id_recovers_all_three_stiffnesses():
+    """The force-from-motion baseline closes the dynamic-rod shear/axial gap:
+    EI/GA/EA all recovered from noisy motion via inertia-derived forces."""
+    from pinn_engine.data.synthetic import generate_dynamic_cosserat
+    from pinn_engine.baselines import recover_from_template_data
+    n_s, n_t = 41, 161
+    data, truth = generate_dynamic_cosserat(seed=0, n_s=n_s, n_t=n_t,
+                                            pos_noise_std=1e-3, ang_noise_std=5e-3)
+    r = recover_from_template_data(data, n_s, n_t).as_dict()
+    # All three recovered to single-digit %, where the PINN stalls at ~250% on GA/EA.
+    assert abs(r["EI_unit"] - 1.0) < 0.06
+    assert abs(r["GA_unit"] - 1.0) < 0.04
+    assert abs(r["EA_unit"] - 1.0) < 0.10
+
+
 def test_objective_returns_relative_error():
     tpl = get_template("damped_oscillator")
 

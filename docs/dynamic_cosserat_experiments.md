@@ -112,9 +112,52 @@ What we found, across many iterations:
   GA/EA without 2nd derivatives.
 - Much longer budgets on GPU (these runs were CPU-bound at ~0.3-1.0 s/epoch).
 
-**Bottom line:** the dynamic model and inverse template are built and *verified*;
-bending stiffness is recoverable from motion; full shear+axial recovery is the
-open frontier and is documented here rather than overclaimed.
+**Bottom line (PINN):** bending stiffness is recoverable from motion in the
+collocation PINN; full shear+axial recovery stalls there. The fix is below.
+
+## Gap closed — force-from-motion identification
+
+The shear/axial gap is **closed** by a direct, physics-informed estimator
+(`pinn_engine/baselines/cosserat_force_id.py`,
+`scripts/exp_cosserat_force_id.py`). Key insight: the internal force `N(s,t)`
+is **kinematic** — linear-momentum balance integrated from the free tip gives
+
+```
+Nx(s,t) = −∫ₛᴸ (x_tt + c·x_t) ds'        Ny(s,t) = −∫ₛᴸ (y_tt + g + c·y_t) ds'
+```
+
+so `N` depends only on the measured accelerations and known `g, c` — **not on
+the unknown stiffnesses**. With `N` derived from the motion, the constitutive
+law is *linear* in the stiffnesses and recovered by least squares using only
+**first** spatial derivatives (the strains) plus the angular balance for EI:
+
+```
+[Nx; Ny] = EA·(ν−1)·[cosθ; sinθ] + GA·η·[−sinθ; cosθ]
+j·θ_tt − (x_s·Ny − y_s·Nx) = EI·θ_ss
+```
+
+This sidesteps the 2nd-derivative explain-away entirely (the divergence is
+*integrated away* into `N`, which the data fixes). Derivatives are taken with
+Savitzky-Golay local-polynomial fits (smooth + differentiate in one step) for
+noise robustness. Results (grid 41×161, noisy rows averaged over 5 seeds):
+
+| noise (pos, ang) | EI_unit | GA_unit | EA_unit |
+|---|---|---|---|
+| clean | 0.79% | 0.70% | 5.09% |
+| 1e-3, 5e-3 | **2.08%** | **0.85%** | **5.55%** |
+| 2e-3, 1e-2 | 6.05% | 1.24% | 6.85% |
+
+All three stiffnesses recovered to single digits from noisy motion — where the
+PINN stalls at ~250% on GA/EA. EA (axial, the smallest strain signal) is the
+hardest and benefits most from dense time sampling (more accurate
+accelerations). This is the recommended solver for the dynamic rod; the PINN
+remains useful for smoothing the fields / recovering EI and as the
+forward-consistency check.
+
+**Methodological takeaway:** when a stiffness enters a PINN residual only
+through a high-order derivative the network under-resolves, *integrate the
+balance law to expose the parameter against a data-derived quantity* (here,
+internal force from inertia) instead of fighting the derivative.
 
 ## Reproduce
 

@@ -76,6 +76,16 @@ Reverse chronological. Commit SHAs in parens. Major moments **bold**.
     load shock-excites fast waves (accel ~180); distributed gravity (accel ~8) is
     what makes it tractable. See `docs/dynamic_cosserat_experiments.md`; driver
     `scripts/exp_dynamic_cosserat.py`.
+- (**gap closed**) **`cosserat_force_id` baseline** — the dynamic shear/axial
+  gap is closed by a direct physics-informed estimator: the internal force
+  `N(s,t)` is *kinematic* (the tip-integral of inertia), so it's derivable from
+  the measured motion alone; the constitutive law is then linear in EI/GA/EA and
+  recovered by least squares with only first spatial derivatives — **EI 2% / GA
+  0.9% / EA 5.5%** on noisy motion (vs the PINN's ~250% on GA/EA). The lesson:
+  when a parameter only enters via a high-order derivative the net
+  under-resolves, integrate the balance law to expose it against a data-derived
+  quantity rather than fighting the derivative.
+  (`pinn_engine/baselines/cosserat_force_id.py`, `scripts/exp_cosserat_force_id.py`.)
 
 ### Full planar Cosserat rod — first multi-output multi-unknown PDE (Jun 07, 2026)
 
@@ -841,7 +851,7 @@ All add Gaussian noise; all are reproducible from seed.
 | `euler_bernoulli_beam` | `EI·w'''' = q₀` (static, simply-supported) | EI_unit | training-limited (CRLB 0.10%; engine convergence is slow on the 4th-order autograd path) |
 | `planar_elastica` | `EI·θ'' = −P₀·cos θ` (geometrically-exact large-deflection rod) | EI_unit | **0.565%** (RAR) / 0.648% (baseline) — near CRLB floor 0.46%, ~70 s on CPU |
 | `planar_cosserat` | full Simo-Reissner rod (shear + extension), 3 residuals | EI_unit, GA_unit, EA_unit | **mean 0.30%** (EI 0.69% / GA 0.20% / EA 0.00%) at CRLB floor; fixed scale=100, ~10 min CPU |
-| `dynamic_cosserat` | **dynamic** Simo-Reissner rod (inertia + time), 2-D space-time | EI_unit, GA_unit, EA_unit | EI ~7% (recoverable); GA/EA training-limited — frontier (CRLB EI 0.02% / GA 0.05% / EA 0.02%) |
+| `dynamic_cosserat` | **dynamic** Simo-Reissner rod (inertia + time), 2-D space-time | EI_unit, GA_unit, EA_unit | PINN: EI ~7%, GA/EA stall; **force-from-motion solver: EI 2% / GA 0.9% / EA 5.5%** (noisy) — gap closed |
 
 ---
 
