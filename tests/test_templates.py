@@ -194,6 +194,30 @@ def test_spatial_cosserat_3d_recovers_six_stiffnesses():
         assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
 
 
+def test_hyperelastic_recovers_nonlinear_constitutive():
+    """Recover the nonlinear (cubic) moment-curvature and axial coefficients from
+    a load sweep, and confirm a linear-only fit is decisively rejected."""
+    from pinn_engine.baselines import (generate_hyperelastic_sweep,
+                                       recover_hyperelastic)
+    # Clean: exact recovery of linear + nonlinear coefficients.
+    data, truth = generate_hyperelastic_sweep(ang_noise_std=0.0, strain_noise_std=0.0, seed=0)
+    r = recover_hyperelastic(data)
+    assert abs(r.a1 - truth["a1"]) < 0.01 and abs(r.a3 - truth["a3"]) < 0.01
+    assert abs(r.b1 - truth["b1"]) < 0.05 and abs(r.b3 - truth["b3"]) < 0.1
+    # The hyperelastic nonlinearity is detectable: linear-only fit residual is
+    # far larger than the cubic-fit residual.
+    assert r.linear_only_rms > 20 * max(r.nonlinear_rms, 1e-6)
+    # Noisy: still recovers the coefficients within a few %.
+    data2, _ = generate_hyperelastic_sweep(ang_noise_std=3e-3, strain_noise_std=2e-3, seed=0)
+    r2 = recover_hyperelastic(data2)
+    assert abs(r2.a1 - truth["a1"]) < 0.05 and abs(r2.a3 - truth["a3"]) < 0.08
+    # Strain-softening (a3<0) is recovered with the right sign.
+    data3, _ = generate_hyperelastic_sweep(bend={"a1": 1.0, "a3": -0.3},
+                                           ang_noise_std=3e-3, seed=1)
+    r3 = recover_hyperelastic(data3)
+    assert r3.a3 < -0.2
+
+
 def test_pneumatic_actuation_signs_and_self_calibration():
     """Pneumatic actuation pushes (extends) and bends *away* from the chamber —
     opposite a tendon — and self-calibrates EA/EI1/EI2/GJ from pressure sweeps."""

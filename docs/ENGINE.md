@@ -52,6 +52,18 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Hyperelastic material identification (Jun 08, 2026)
+
+- **`hyperelastic_rod_id` — nonlinear constitutive identification.** Real soft
+  materials are hyperelastic (nonlinear, strain-stiffening); a linear rod is only
+  the small-strain limit. Models the symmetric leading nonlinearity
+  `M(κ)=a1κ+a3κ³`, `N(ε)=b1ε+b3ε³` and recovers all four coefficients from a load
+  sweep (tip moment → constant statically-determinate curvature). Clean: exact;
+  noisy: ~1%. The **linear-only fit residual is ~100× the cubic residual** — the
+  hyperelasticity is decisively detected and quantified, not assumed. Recovers
+  strain-softening (`a3<0`) too. Closes the material-nonlinearity gap. See
+  `docs/hyperelastic_experiments.md`; demo `scripts/exp_hyperelastic.py`.
+
 ### Pneumatic actuation (Jun 08, 2026)
 
 - **`pneumatic_actuated_id` — the second soft-robot drive.** Pressurized chambers

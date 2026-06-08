@@ -37,6 +37,12 @@ from pinn_engine.baselines.pneumatic_actuated_id import (
     recover_pneumatic_stiffness,
     PneumaticCalibrationResult,
 )
+from pinn_engine.baselines.hyperelastic_rod_id import (
+    simulate_hyperelastic_bending,
+    generate_hyperelastic_sweep,
+    recover_hyperelastic,
+    HyperelasticIDResult,
+)
 
 __all__ = [
     "EKFInverseDampedOscillator", "run_ekf_baseline",
@@ -52,4 +58,6 @@ __all__ = [
     "pneumatic_wrench", "simulate_pneumatic_actuated",
     "generate_pneumatic_calibration", "recover_pneumatic_stiffness",
     "PneumaticCalibrationResult",
+    "simulate_hyperelastic_bending", "generate_hyperelastic_sweep",
+    "recover_hyperelastic", "HyperelasticIDResult",
 ]
