@@ -339,6 +339,55 @@ def generate_diffusion_1d(
     }, {"D": D}
 
 
+# -------------------------------------------------------------- Burgers' equation (nonlinear advection-diffusion)
+
+
+def generate_burgers_1d(
+    nu: float = 0.05,
+    t_end: float = 1.0,
+    n_x: int = 64,
+    n_t: int = 50,
+    solver_nx: int = 256,
+    noise_std: float = 1e-2,
+    seed: int = 0,
+):
+    """Viscous Burgers' equation ``u_t + u·u_x = ν·u_xx`` on ``x∈[-1,1]``,
+    ``u(x,0) = −sin(πx)``, ``u(±1,t)=0`` — the canonical nonlinear PDE
+    (advection steepens, diffusion smooths) and the classic PINN benchmark.
+
+    Ground truth from a **stable** method-of-lines solver: conservative flux form
+    ``u_t = −½(u²)_x + ν·u_xx`` with central differences on a fine grid and a
+    stiff BDF integrator. The conservative flux + implicit integrator are what
+    keep it from blowing up at the steep internal layer (naive non-conservative
+    FD does). Returns a dense noisy ``u(x,t)`` grid; the inverse problem is to
+    recover ``ν``.
+    """
+    rng = np.random.default_rng(seed)
+    xf = np.linspace(-1.0, 1.0, solver_nx); dx = xf[1] - xf[0]
+    u0 = -np.sin(np.pi * xf)
+
+    def rhs(t, u):
+        uu = u.copy(); uu[0] = 0.0; uu[-1] = 0.0
+        f = 0.5 * uu * uu
+        dfdx = np.zeros_like(uu); dfdx[1:-1] = (f[2:] - f[:-2]) / (2 * dx)
+        uxx = np.zeros_like(uu); uxx[1:-1] = (uu[2:] - 2 * uu[1:-1] + uu[:-2]) / dx ** 2
+        du = -dfdx + nu * uxx; du[0] = 0.0; du[-1] = 0.0
+        return du
+
+    te = np.linspace(0.0, t_end, n_t)
+    sol = solve_ivp(rhs, (0.0, t_end), u0, t_eval=te, method="BDF", rtol=1e-8, atol=1e-10)
+    if not sol.success:
+        raise RuntimeError(f"Burgers solve failed at nu={nu}: {sol.message}")
+    # subsample the fine spatial grid to the measurement grid
+    idx = np.linspace(0, solver_nx - 1, n_x, dtype=int)
+    x = xf[idx]
+    Xg, Tg = np.meshgrid(x, te, indexing="ij")  # (n_x, n_t)
+    Uxt = sol.y[idx, :]            # (n_x, n_t) — matches (x, t) ordering
+    u_noisy = Uxt + rng.normal(0, noise_std, Uxt.shape)
+    inp = np.stack([Xg.ravel(), Tg.ravel()], axis=1).astype(np.float32)  # (x, t)
+    return {"u_meas": (inp, u_noisy.ravel().astype(np.float32))}, {"nu": float(nu)}
+
+
 # -------------------------------------------------------------- Euler-Bernoulli beam (4th-order static)
 
 

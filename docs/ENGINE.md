@@ -52,6 +52,19 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Beyond rods: nonlinear PDE templates (Jun 09, 2026)
+
+- **`burgers_1d` added — the deferred flagship, now cracked.** Viscous Burgers
+  `u_t + u·u_x = ν·u_xx` (u(x,0)=−sin πx) — the canonical nonlinear PDE and the
+  engine's first **nonlinear self-advection** residual. The forward solver that
+  "blew up at shock formation" (per the earlier changelog) is fixed by the
+  **conservative flux form** `−½(u²)_x` + a **stiff BDF integrator** on a fine
+  grid — stable even at the hard `ν=0.01/π` (gradient ~113, never blows up). The
+  inverse recovers **ν to 0.46%** (truth 0.05) at 6000 ep, near the CRLB floor
+  0.13%; the nonlinearity is no obstacle for the inverse since dense data anchors
+  the field. See `docs/burgers_experiments.md`. A reminder that the engine is a
+  general inverse-PDE solver, not a rod-specific tool.
+
 ### Actuated dynamics (Jun 08, 2026)
 
 - **`actuated_dynamics_id` — actuation + inertia.** The quasi-static actuation
@@ -976,7 +989,7 @@ All add Gaussian noise; all are reproducible from seed.
 
 ## Templates inventory
 
-12 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
+13 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
 
 | name | physics | unknowns | best result via engine |
 |---|---|---|---|
@@ -986,6 +999,7 @@ All add Gaussian noise; all are reproducible from seed.
 | `nonlinear_drag_1d` | `m·u̇ + drag` | c_lin, c_quad | 13% adaptive; **0.78%** + L2 prior (truth anchor) |
 | `coupled_drag_3d` | planar three-axis planar + Coriolis | c_lin, c_y, c_n | adaptive 1.8/22/6.6%; **0/1.4/0%** + L2 prior (full truth) |
 | `diffusion_1d` | `u_t = D·u_xx` | D | **1.6%** at 50 ep / **0.24%** at 200 ep / **0.10%** at 200 ep + L2 prior anchor=truth (= CRLB floor 0.063%) |
+| `burgers_1d` | `u_t + u·u_x = ν·u_xx` (nonlinear advection-diffusion) | ν | **0.46%** at 6000 ep (near CRLB floor 0.13%); stable conservative solver |
 | `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave) | E_unit | **4.5%** (hand-tuned two-phase, run #16); 8% (adaptive, cap-limited) |
 | `axial_elastic_bar` | `EA·u'' + p₀ = 0` (static, clamped-free) | EA_unit | **0.26%** in 24 s on CPU (near CRLB 0.03%) |
 | `euler_bernoulli_beam` | `EI·w'''' = q₀` (static, simply-supported) | EI_unit | training-limited (CRLB 0.10%; engine convergence is slow on the 4th-order autograd path) |

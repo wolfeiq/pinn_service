@@ -11,5 +11,6 @@ from pinn_engine.dsl.templates_lib import (
     axial_elastic_bar,
     planar_elastica,
     planar_cosserat,
-    dynamic_cosserat,  # noqa: F401
+    dynamic_cosserat,
+    burgers_1d,  # noqa: F401
 )  # noqa: F401

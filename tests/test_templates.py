@@ -8,7 +8,8 @@ from pinn_engine.dsl.templates import get_template
 @pytest.mark.parametrize("name", ["damped_oscillator", "lorenz", "diffusion_1d",
                                   "coupled_drag_3d", "euler_bernoulli_beam",
                                   "axial_elastic_bar", "planar_elastica",
-                                  "planar_cosserat", "dynamic_cosserat"])
+                                  "planar_cosserat", "dynamic_cosserat",
+                                  "burgers_1d"])
 def test_template_system_and_data(name):
     tpl = get_template(name)
     sys = tpl.system()
@@ -452,6 +453,30 @@ def test_spatial_cosserat_solver_analytic_limits():
     twist = 2 * np.arctan2(q[-1, 1], q[-1, 0])
     assert abs(twist - 0.3 / 0.8) < 1e-2
     assert abs(r[-1, 1]) < 1e-3 and abs(r[-1, 2]) < 1e-3
+
+
+def test_burgers_solver_stable_and_nonlinear():
+    """Burgers ground-truth solver stays finite through the steep internal layer
+    (the failure mode the changelog flagged), and the residual is genuinely
+    nonlinear (contains the self-advection u*u_x)."""
+    import numpy as np
+    import sympy as sp
+    from pinn_engine.data.synthetic import generate_burgers_1d
+    tpl = get_template("burgers_1d")
+    sys = tpl.system(); sys.validate()
+    # nonlinear self-advection term present: u * du/dx
+    assert any("u*Derivative(u, x)" in str(sp.expand(expr)) for expr in sys.equations)
+    # solver finite at the standard nu and at the hard benchmark nu=0.01/pi
+    for nu in (0.05, 0.01 / np.pi):
+        data, truth = generate_burgers_1d(nu=nu, seed=0)
+        _, u = data["u_meas"]
+        assert np.isfinite(u).all()
+        assert abs(u).max() < 1.5            # bounded by the IC amplitude (+noise)
+    # IC is -sin(pi x) and the profile steepens (max |u| stays ~1)
+    data, _ = generate_burgers_1d(nu=0.05, seed=0)
+    inp, u = data["u_meas"]
+    m = inp[:, 1] == 0.0
+    assert np.abs(u[m] + np.sin(np.pi * inp[m, 0])).max() < 0.05
 
 
 def test_objective_returns_relative_error():
