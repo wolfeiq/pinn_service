@@ -43,6 +43,12 @@ from pinn_engine.baselines.hyperelastic_rod_id import (
     recover_hyperelastic,
     HyperelasticIDResult,
 )
+from pinn_engine.baselines.contact_id import (
+    simulate_contact,
+    generate_contact_scenario,
+    recover_contact,
+    ContactIDResult,
+)
 
 __all__ = [
     "EKFInverseDampedOscillator", "run_ekf_baseline",
@@ -60,4 +66,6 @@ __all__ = [
     "PneumaticCalibrationResult",
     "simulate_hyperelastic_bending", "generate_hyperelastic_sweep",
     "recover_hyperelastic", "HyperelasticIDResult",
+    "simulate_contact", "generate_contact_scenario",
+    "recover_contact", "ContactIDResult",
 ]

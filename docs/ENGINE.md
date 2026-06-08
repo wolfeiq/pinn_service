@@ -52,6 +52,17 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Proprioceptive contact sensing (Jun 08, 2026)
+
+- **`contact_id` — environment interaction.** A point contact makes the internal
+  shear jump → the moment `m(s)=EI·κ(s)` has a slope kink at the contact. From
+  the measured shape alone, a changepoint fit of κ(s) recovers **where** the rod
+  touches (`s_c`) and **how hard** (`F_c`) — whole-body tactile sensing, no force
+  sensor. Geometrically-exact: `κ'` jumps by `−cosθ(s_c)·F_c/EI`. Recovers `s_c`
+  to ~1% of length and `F_c` to ~3% across locations/forces, robust to noise. See
+  `docs/contact_experiments.md`; demo `scripts/exp_contact.py`. With this the
+  soft-rod stack spans drive (tendon+pneumatic), nonlinear material, and contact.
+
 ### Hyperelastic material identification (Jun 08, 2026)
 
 - **`hyperelastic_rod_id` — nonlinear constitutive identification.** Real soft

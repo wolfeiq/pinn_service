@@ -194,6 +194,21 @@ def test_spatial_cosserat_3d_recovers_six_stiffnesses():
         assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
 
 
+def test_contact_recovers_location_and_force_from_shape():
+    """Proprioceptive contact sensing: recover the contact arclength and force
+    from the curvature kink in the measured shape alone."""
+    from pinn_engine.baselines import generate_contact_scenario, recover_contact
+    for sc, Fc in [(0.3, 1.5), (0.5, 2.0), (0.7, 3.0)]:
+        d, truth = generate_contact_scenario(Fc=Fc, sc=sc, ang_noise_std=0.0, seed=0)
+        r = recover_contact(d)
+        assert abs(r.sc - sc) < 0.03, (sc, r.sc)
+        assert abs(r.Fc - Fc) / Fc < 0.05, (Fc, r.Fc)
+    # Noisy still localizes and sizes the contact.
+    d2, _ = generate_contact_scenario(Fc=2.0, sc=0.5, ang_noise_std=3e-3, seed=0)
+    r2 = recover_contact(d2)
+    assert abs(r2.sc - 0.5) < 0.05 and abs(r2.Fc - 2.0) / 2.0 < 0.08
+
+
 def test_hyperelastic_recovers_nonlinear_constitutive():
     """Recover the nonlinear (cubic) moment-curvature and axial coefficients from
     a load sweep, and confirm a linear-only fit is decisively rejected."""
