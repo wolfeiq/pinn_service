@@ -77,7 +77,9 @@ def recover_actuated_dynamics(data, sg_window=41, sg_poly=3) -> ActuatedDynamics
     actuation input, by linear regression of the equation of motion."""
     t = np.asarray(data["t"], float); kap = np.asarray(data["kappa"], float)
     M = np.asarray(data["M_act"], float)
-    dt = float(t[1] - t[0]); w = sg_window + 1 if sg_window % 2 == 0 else sg_window
+    dt = float(t[1] - t[0])
+    w = min(sg_window, len(t) - 1 if len(t) % 2 == 0 else len(t) - 2)
+    w = max(w + 1 if w % 2 == 0 else w, sg_poly + 2)
     ks = savgol_filter(kap, w, sg_poly, deriv=0)
     kd = savgol_filter(kap, w, sg_poly, deriv=1, delta=dt)
     kdd = savgol_filter(kap, w, sg_poly, deriv=2, delta=dt)

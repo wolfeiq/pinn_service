@@ -20,7 +20,7 @@ out-of-plane motion and dynamic torsion.
 **Inverse** (`recover_dynamic_spatial_stiffness`) — in dynamics, *both* the
 internal force and moment are kinematic:
 
-    n_sp(s,t) = −∫ₛᴸ ρA (r_tt − g) ds'                       (linear momentum)
+    n_sp(s,t) = −∫ₛᴸ ρA (r_tt − g + c r_t) ds'               (linear momentum)
     m_sp(s,t) = −∫ₛᴸ (dH/dt − r'×n_sp) ds',  H = R J_ρ Ω      (angular momentum)
 
 both derivable from the measured motion + known inertia, **independent of the
@@ -131,7 +131,8 @@ def generate_dynamic_spatial_cosserat(*, refs=None, Jrho=DYN3D_JRHO, gvec=DYN3D_
     q = q + rng.normal(0, quat_noise_std, q.shape)
     q /= np.linalg.norm(q, axis=2, keepdims=True)
     data = {"s": s, "t": t, "r": r, "q": q, "refs": refs,
-            "Jrho": np.array(Jrho, float), "gvec": np.array(gvec, float), "rhoA": rhoA}
+            "Jrho": np.array(Jrho, float), "gvec": np.array(gvec, float),
+            "rhoA": rhoA, "c": float(c)}
     return data, truth
 
 
@@ -164,12 +165,14 @@ def recover_dynamic_spatial_stiffness(data, sg_window_t=21, sg_window_s=9,
     r = np.asarray(data["r"], float); q = np.asarray(data["q"], float)
     Jr = np.asarray(data["Jrho"], float); g = np.asarray(data["gvec"], float)
     rhoA = float(data["rhoA"]); refs = data["refs"]
+    c_damp = float(data.get("c", 0.0))
     nn, nt, _ = r.shape; ds = float(s[1] - s[0]); dt = float(t[1] - t[0])
     AX, TT = 0, 1
     q = q / np.linalg.norm(q, axis=2, keepdims=True)
     wt, ws, p = sg_window_t, sg_window_s, sg_poly
 
     r_tt = _sg(r, TT, dt, 2, wt, p)
+    r_t = _sg(r, TT, dt, 1, wt, p)
     r_s = _sg(_sg(r, TT, dt, 0, wt, p), AX, ds, 1, ws, p)
     q_t = _sg(q, TT, dt, 1, wt, p)
     q_s = _sg(_sg(q, TT, dt, 0, wt, p), AX, ds, 1, ws, p)
@@ -193,7 +196,9 @@ def recover_dynamic_spatial_stiffness(data, sg_window_t=21, sg_window_s=9,
         for i in range(nn - 2, -1, -1):
             out[i] = out[i + 1] + 0.5 * (F[i] + F[i + 1]) * ds
         return -out
-    Nsp = integ_tip(rhoA * (r_tt - g[None, None, :]))
+    # linear momentum: ρA r_tt = ∂n_sp/∂s + ρA g − ρA c r_t
+    #   ⇒ ∂n_sp/∂s = ρA (r_tt − g + c r_t)
+    Nsp = integ_tip(rhoA * (r_tt - g[None, None, :] + c_damp * r_t))
     Msp = integ_tip(Hdot - np.cross(r_s, Nsp))
     nmat = np.einsum("ijba,ijb->ija", Rall, Nsp)   # Rᵀ Nsp
     mmat = np.einsum("ijba,ijb->ija", Rall, Msp)
