@@ -194,6 +194,29 @@ def test_spatial_cosserat_3d_recovers_six_stiffnesses():
         assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
 
 
+def test_viscohyperelastic_separates_nonlinear_and_rate():
+    """Combined hyper+visco: multi-level creep recovers the nonlinear elastic
+    coefficients (a1,a3), the relaxation strength g_inf, and the time tau —
+    and the level-dependent instantaneous response rejects a linear fit."""
+    from pinn_engine.baselines import (generate_viscohyper_creep,
+                                       recover_viscohyper)
+    truth = {"a1": 1.0, "a3": 0.6, "g_inf": 0.5, "tau": 0.8}
+    d, _ = generate_viscohyper_creep(params=truth, noise_std=2e-3, seed=0)
+    r = recover_viscohyper(d)
+    assert abs(r.a1 - 1.0) < 0.05 and abs(r.a3 - 0.6) < 0.06
+    assert abs(r.g_inf - 0.5) < 0.04
+    assert abs(r.tau - 0.8) < 0.12
+    # The hyperelastic nonlinearity is real: a linear-only instantaneous fit
+    # leaves a large residual.
+    assert r.linear_visco_rms > 0.05
+    # A different (more nonlinear, slower) material is also recovered.
+    other = {"a1": 0.8, "a3": 1.2, "g_inf": 0.35, "tau": 1.2}
+    d2, _ = generate_viscohyper_creep(params=other, noise_std=2e-3, seed=1)
+    r2 = recover_viscohyper(d2)
+    assert abs(r2.a1 - 0.8) < 0.05 and abs(r2.a3 - 1.2) < 0.1
+    assert abs(r2.g_inf - 0.35) < 0.04 and abs(r2.tau - 1.2) < 0.2
+
+
 def test_viscoelastic_creep_and_dma_agree():
     """Recover the SLS viscoelastic parameters (E_inf, E1, tau) two independent
     ways — creep and DMA — and confirm they agree; check the loss-modulus peak

@@ -52,6 +52,17 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Combined hyper- + visco-elastic (Jun 08, 2026)
+
+- **`viscohyperelastic_rod_id` — nonlinear *and* rate-dependent material** (QLV /
+  nonlinear SLS): `M = g_∞·M_e(κ) + q`, `q̇=−q/τ+(1−g_∞)Ṁ_e`, `M_e=a1κ+a3κ³`. A
+  multi-level creep sweep separates the physics — instantaneous curvatures
+  `κ_g(M_0)` give the nonlinear elastic `a1,a3`; equilibrium `κ_∞(M_0)` give the
+  relaxation strength `g_∞`; a 1-D ODE fit gives `τ`. All four to ~1% (clean);
+  the large linear-fit residual confirms genuine nonlinearity. Unifies the
+  material story (the realistic silicone constitutive law is both). See
+  `docs/viscohyperelastic_experiments.md`; demo `scripts/exp_viscohyperelastic.py`.
+
 ### Viscoelastic material identification (Jun 08, 2026)
 
 - **`viscoelastic_rod_id` — rate-dependent material.** Real soft materials creep,
