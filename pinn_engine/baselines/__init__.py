@@ -70,6 +70,12 @@ from pinn_engine.baselines.viscohyperelastic_rod_id import (
     recover_viscohyper,
     ViscoHyperIDResult,
 )
+from pinn_engine.baselines.actuated_dynamics_id import (
+    simulate_actuated_dynamics,
+    generate_step_actuation,
+    recover_actuated_dynamics,
+    ActuatedDynamicsResult,
+)
 
 __all__ = [
     "EKFInverseDampedOscillator", "run_ekf_baseline",
@@ -95,4 +101,6 @@ __all__ = [
     "recover_creep", "recover_dma", "ViscoelasticIDResult",
     "nonlinear_creep", "generate_viscohyper_creep",
     "recover_viscohyper", "ViscoHyperIDResult",
+    "simulate_actuated_dynamics", "generate_step_actuation",
+    "recover_actuated_dynamics", "ActuatedDynamicsResult",
 ]

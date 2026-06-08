@@ -52,6 +52,16 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Actuated dynamics (Jun 08, 2026)
+
+- **`actuated_dynamics_id` — actuation + inertia.** The quasi-static actuation
+  modules gain a dynamic response: modal `I_eff·κ̈ + c·κ̇ + EI·κ = M_act(t)`. A
+  step-actuation ring-down recovers stiffness, damping, *and* modal inertia at
+  once — `M_act` known → linear-in-parameters regression of `[κ̈,κ̇,κ]·(I,c,EI)`.
+  EI ~1% (most robust); c, I_eff ~5-6% (from κ̇,κ̈). Gives a dynamic controller
+  the parameters quasi-static self-calibration can't (damping, inertia). See
+  `docs/actuated_dynamics_experiments.md`; demo `scripts/exp_actuated_dynamics.py`.
+
 ### Multi-point contact sensing (Jun 08, 2026)
 
 - **`contact_multi_id` — several simultaneous contacts** (soft finger wrapping an

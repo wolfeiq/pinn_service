@@ -260,6 +260,27 @@ def test_contact_recovers_location_and_force_from_shape():
     assert abs(r2.sc - 0.5) < 0.05 and abs(r2.Fc - 2.0) / 2.0 < 0.08
 
 
+def test_actuated_dynamics_recovers_stiffness_damping_inertia():
+    """Dynamic self-calibration: a step actuation ring-down recovers EI, damping
+    c, and modal inertia I_eff together by regressing the equation of motion."""
+    from pinn_engine.baselines import (generate_step_actuation,
+                                       recover_actuated_dynamics)
+    truth = {"EI": 1.0, "c": 0.05, "I_eff": 0.02}
+    d, _ = generate_step_actuation(params=truth, noise_std=2e-3, seed=0)
+    r = recover_actuated_dynamics(d)
+    assert abs(r.EI - 1.0) < 0.05
+    assert abs(r.c - 0.05) / 0.05 < 0.20
+    assert abs(r.I_eff - 0.02) / 0.02 < 0.20
+    # natural frequency / damping ratio derived consistently
+    assert abs(r.omega_n - (1.0 / 0.02) ** 0.5) < 1.0
+    # A stiffer, more-damped rod is recovered too (EI most robust).
+    d2, _ = generate_step_actuation(params={"EI": 2.0, "c": 0.12, "I_eff": 0.03},
+                                    noise_std=2e-3, seed=1)
+    r2 = recover_actuated_dynamics(d2)
+    assert abs(r2.EI - 2.0) < 0.06
+    assert abs(r2.I_eff - 0.03) / 0.03 < 0.25
+
+
 def test_multi_contact_recovers_several_contacts():
     """Recover multiple simultaneous point contacts (locations + forces) from the
     curvature kinks in the shape; N-known is robust, auto-count works for few."""
