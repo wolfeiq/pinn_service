@@ -194,6 +194,34 @@ def test_spatial_cosserat_3d_recovers_six_stiffnesses():
         assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
 
 
+def test_pneumatic_actuation_signs_and_self_calibration():
+    """Pneumatic actuation pushes (extends) and bends *away* from the chamber —
+    opposite a tendon — and self-calibrates EA/EI1/EI2/GJ from pressure sweeps."""
+    from pinn_engine.baselines import (simulate_pneumatic_actuated,
+                                       simulate_tendon_actuated,
+                                       generate_pneumatic_calibration,
+                                       recover_pneumatic_stiffness)
+    stiff = {"EA": 15.0, "GA1": 15.0, "GA2": 12.0, "GJ": 0.8, "EI1": 1.0, "EI2": 0.8}
+    # +y chamber: extends (x>1) and bends away (y<0); a +y tendon bends toward (y>0).
+    s, r, q = simulate_pneumatic_actuated(stiff, [(1.0, 0.05, 0, 0)], [2.0])
+    assert r[-1, 0] > 1.0 and r[-1, 1] < 0.0
+    _, r_t, _ = simulate_tendon_actuated(stiff, [(0.05, 0, 0)], [2.0])
+    assert r_t[-1, 1] > 0.0
+    # central chamber → pure extension
+    s, r, q = simulate_pneumatic_actuated(stiff, [(2.0, 0, 0, 0)], [2.0])
+    assert r[-1, 0] > 1.1 and abs(r[-1, 1]) < 1e-9
+    # self-calibration
+    names = ["EA_unit", "EI1_unit", "EI2_unit", "GJ_unit"]
+    data, _ = generate_pneumatic_calibration(pos_noise_std=0.0, quat_noise_std=0.0, seed=0)
+    rc = recover_pneumatic_stiffness(data).as_dict()
+    for k in names:
+        assert abs(rc[k] - 1.0) < 0.01, (k, rc[k])
+    data3, _ = generate_pneumatic_calibration(pos_noise_std=1e-3, quat_noise_std=3e-3, seed=0)
+    r3 = recover_pneumatic_stiffness(data3).as_dict()
+    for k in names:
+        assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
+
+
 def test_tendon_actuation_constant_curvature_and_self_calibration():
     """Tendon actuation: a single tendon gives the constant-curvature law
     κ=τd/EI, and a sweep of known tension patterns self-calibrates the rod's

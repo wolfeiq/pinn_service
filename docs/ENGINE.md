@@ -52,6 +52,17 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Pneumatic actuation (Jun 08, 2026)
+
+- **`pneumatic_actuated_id` — the second soft-robot drive.** Pressurized chambers
+  (PneuNets / fiber-reinforced): a chamber of area `A` at offset `(dy,dz)` under
+  pressure `P` pushes with force `P·A` → `n_act=(+ΣPA,0,0)` (extension),
+  `m_act=(ΣPA·h, ΣPA·dz, −ΣPA·dy)`. Opposite sign to a tendon — extends and bends
+  *away* from the chamber (verified). Self-calibration from pressure sweeps:
+  clean exact; noisy (pos 1e-3, quat 3e-3): **EA 0.2% / EI1 3.6% / EI2 2.6% /
+  GJ 3.3%**. Both major drives (pull/push) now covered. See
+  `docs/pneumatic_actuation_experiments.md`; demo `scripts/exp_pneumatic_actuation.py`.
+
 ### Tendon actuation — passive rod → soft robot (Jun 07, 2026)
 
 - **`tendon_actuated_id` — first actuation capability.** Cables routed at

@@ -30,6 +30,13 @@ from pinn_engine.baselines.tendon_actuated_id import (
     recover_tendon_stiffness,
     TendonCalibrationResult,
 )
+from pinn_engine.baselines.pneumatic_actuated_id import (
+    pneumatic_wrench,
+    simulate_pneumatic_actuated,
+    generate_pneumatic_calibration,
+    recover_pneumatic_stiffness,
+    PneumaticCalibrationResult,
+)
 
 __all__ = [
     "EKFInverseDampedOscillator", "run_ekf_baseline",
@@ -42,4 +49,7 @@ __all__ = [
     "actuation_wrench", "simulate_tendon_actuated",
     "generate_tendon_calibration", "recover_tendon_stiffness",
     "TendonCalibrationResult",
+    "pneumatic_wrench", "simulate_pneumatic_actuated",
+    "generate_pneumatic_calibration", "recover_pneumatic_stiffness",
+    "PneumaticCalibrationResult",
 ]
