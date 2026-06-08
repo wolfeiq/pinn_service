@@ -52,6 +52,17 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Multi-point contact sensing (Jun 08, 2026)
+
+- **`contact_multi_id` — several simultaneous contacts** (soft finger wrapping an
+  object). Key trick: `M=EI·θ'` is *exactly piecewise-linear in x* (since
+  `∫cosθ ds = x`), so a continuous PWL fit of `M` vs `x` reads off contact
+  positions (breakpoints) and forces (slope jumps). `recover_n_contacts` (N
+  known): locations ~0.01-0.03, forces ~5-20% noisy, for 1-3 contacts;
+  `recover_contacts` adds a best-effort BIC count (reliable for 1-2). Extends the
+  single-point sensor to whole-body multi-contact. See
+  `docs/multi_contact_experiments.md`; demo `scripts/exp_multi_contact.py`.
+
 ### Combined hyper- + visco-elastic (Jun 08, 2026)
 
 - **`viscohyperelastic_rod_id` — nonlinear *and* rate-dependent material** (QLV /

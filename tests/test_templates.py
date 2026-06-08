@@ -260,6 +260,26 @@ def test_contact_recovers_location_and_force_from_shape():
     assert abs(r2.sc - 0.5) < 0.05 and abs(r2.Fc - 2.0) / 2.0 < 0.08
 
 
+def test_multi_contact_recovers_several_contacts():
+    """Recover multiple simultaneous point contacts (locations + forces) from the
+    curvature kinks in the shape; N-known is robust, auto-count works for few."""
+    from pinn_engine.baselines import (generate_multi_contact,
+                                       recover_n_contacts, recover_contacts)
+    for cset in [[(0.3, 1.5), (0.65, 2.0)],
+                 [(0.25, 1.0), (0.5, 1.5), (0.75, 2.0)]]:
+        d, _ = generate_multi_contact(contacts=cset, ang_noise_std=2e-3, seed=0)
+        rec = sorted(recover_n_contacts(d, len(cset)).as_list())
+        for (sc_t, Fc_t), (sc_r, Fc_r) in zip(sorted(cset), rec):
+            assert abs(sc_r - sc_t) < 0.05, (sc_t, sc_r)
+            assert abs(Fc_r - Fc_t) / Fc_t < 0.25, (Fc_t, Fc_r)
+    # Auto-count gets a 2-contact scene right (count + locations).
+    d2, _ = generate_multi_contact(contacts=[(0.3, 1.5), (0.65, 2.0)],
+                                   ang_noise_std=2e-3, seed=0)
+    auto = sorted(recover_contacts(d2).as_list())
+    assert len(auto) == 2
+    assert abs(auto[0][0] - 0.3) < 0.06 and abs(auto[1][0] - 0.65) < 0.06
+
+
 def test_hyperelastic_recovers_nonlinear_constitutive():
     """Recover the nonlinear (cubic) moment-curvature and axial coefficients from
     a load sweep, and confirm a linear-only fit is decisively rejected."""

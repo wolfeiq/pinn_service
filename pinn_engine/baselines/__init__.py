@@ -49,6 +49,13 @@ from pinn_engine.baselines.contact_id import (
     recover_contact,
     ContactIDResult,
 )
+from pinn_engine.baselines.contact_multi_id import (
+    simulate_multi_contact,
+    generate_multi_contact,
+    recover_n_contacts,
+    recover_contacts,
+    MultiContactResult,
+)
 from pinn_engine.baselines.viscoelastic_rod_id import (
     creep_curvature,
     generate_creep_test,
@@ -82,6 +89,8 @@ __all__ = [
     "recover_hyperelastic", "HyperelasticIDResult",
     "simulate_contact", "generate_contact_scenario",
     "recover_contact", "ContactIDResult",
+    "simulate_multi_contact", "generate_multi_contact",
+    "recover_n_contacts", "recover_contacts", "MultiContactResult",
     "creep_curvature", "generate_creep_test", "generate_dma_sweep",
     "recover_creep", "recover_dma", "ViscoelasticIDResult",
     "nonlinear_creep", "generate_viscohyper_creep",
