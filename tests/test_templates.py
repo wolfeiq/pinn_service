@@ -194,6 +194,34 @@ def test_spatial_cosserat_3d_recovers_six_stiffnesses():
         assert abs(r3[k] - 1.0) < 0.10, (k, r3[k])
 
 
+def test_viscoelastic_creep_and_dma_agree():
+    """Recover the SLS viscoelastic parameters (E_inf, E1, tau) two independent
+    ways — creep and DMA — and confirm they agree; check the loss-modulus peak
+    sits at omega=1/tau."""
+    import numpy as np
+    from pinn_engine.baselines import (generate_creep_test, recover_creep,
+                                       generate_dma_sweep, recover_dma)
+    truth = {"E_inf": 1.0, "E1": 1.5, "tau": 0.5}
+    # Creep recovery (noisy).
+    dc, _ = generate_creep_test(params=truth, noise_std=2e-3, seed=0)
+    rc = recover_creep(dc)
+    assert abs(rc.E_inf - 1.0) < 0.05 and abs(rc.E1 - 1.5) < 0.08 and abs(rc.tau - 0.5) < 0.05
+    # DMA recovery (noisy) + loss peak at omega=1/tau.
+    dd, _ = generate_dma_sweep(params=truth, noise_std=2e-3, seed=0)
+    rd = recover_dma(dd)
+    assert abs(rd.E_inf - 1.0) < 0.05 and abs(rd.E1 - 1.5) < 0.08 and abs(rd.tau - 0.5) < 0.05
+    # The two independent methods agree.
+    assert abs(rc.E_inf - rd.E_inf) < 0.05 and abs(rc.tau - rd.tau) < 0.05
+    # Loss modulus peaks near omega = 1/tau = 2.
+    peak_w = max(rd.storage_loss, key=lambda x: x[2])[0]
+    assert abs(peak_w - 2.0) < 1.0
+    # A different material is recovered too.
+    other = {"E_inf": 0.7, "E1": 2.0, "tau": 1.5}
+    do, _ = generate_creep_test(params=other, noise_std=2e-3, seed=1)
+    ro = recover_creep(do)
+    assert abs(ro.E_inf - 0.7) < 0.05 and abs(ro.tau - 1.5) < 0.15
+
+
 def test_contact_recovers_location_and_force_from_shape():
     """Proprioceptive contact sensing: recover the contact arclength and force
     from the curvature kink in the measured shape alone."""

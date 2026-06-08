@@ -49,6 +49,14 @@ from pinn_engine.baselines.contact_id import (
     recover_contact,
     ContactIDResult,
 )
+from pinn_engine.baselines.viscoelastic_rod_id import (
+    creep_curvature,
+    generate_creep_test,
+    generate_dma_sweep,
+    recover_creep,
+    recover_dma,
+    ViscoelasticIDResult,
+)
 
 __all__ = [
     "EKFInverseDampedOscillator", "run_ekf_baseline",
@@ -68,4 +76,6 @@ __all__ = [
     "recover_hyperelastic", "HyperelasticIDResult",
     "simulate_contact", "generate_contact_scenario",
     "recover_contact", "ContactIDResult",
+    "creep_curvature", "generate_creep_test", "generate_dma_sweep",
+    "recover_creep", "recover_dma", "ViscoelasticIDResult",
 ]

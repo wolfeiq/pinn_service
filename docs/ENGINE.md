@@ -52,6 +52,18 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### Viscoelastic material identification (Jun 08, 2026)
+
+- **`viscoelastic_rod_id` — rate-dependent material.** Real soft materials creep,
+  relax, and dissipate (hysteresis). Models the rod bending as a Standard Linear
+  Solid (Zener): `M = E_∞·κ + q`, `q̇ = −q/τ + E_1·κ̇`. Recovers `(E_∞, E_1, τ)`
+  **two independent ways** — a creep test (constant actuation → curvature drifts
+  `M_0/E_g → M_0/E_∞` with retardation `τ·E_g/E_∞`) and a DMA frequency sweep
+  (oscillate → phase lag → storage/loss moduli, loss peak at `ωτ=1`). Clean:
+  exact; noisy: <1%; the two methods agree to <1% (consistency check). Completes
+  the material story (linear → hyperelastic → viscoelastic). See
+  `docs/viscoelastic_experiments.md`; demo `scripts/exp_viscoelastic.py`.
+
 ### Proprioceptive contact sensing (Jun 08, 2026)
 
 - **`contact_id` — environment interaction.** A point contact makes the internal
