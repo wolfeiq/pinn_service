@@ -9,7 +9,7 @@ from pinn_engine.dsl.templates import get_template
                                   "coupled_drag_3d", "euler_bernoulli_beam",
                                   "axial_elastic_bar", "planar_elastica",
                                   "planar_cosserat", "dynamic_cosserat",
-                                  "burgers_1d"])
+                                  "burgers_1d", "fisher_kpp"])
 def test_template_system_and_data(name):
     tpl = get_template(name)
     sys = tpl.system()
@@ -453,6 +453,33 @@ def test_spatial_cosserat_solver_analytic_limits():
     twist = 2 * np.arctan2(q[-1, 1], q[-1, 0])
     assert abs(twist - 0.3 / 0.8) < 1e-2
     assert abs(r[-1, 1]) < 1e-3 and abs(r[-1, 2]) < 1e-3
+
+
+def test_fisher_kpp_front_and_two_unknowns():
+    """Fisher-KPP: solver produces a bounded travelling front (u in [0,1]) that
+    advances, the residual has the logistic reaction, and there are two
+    separately-identifiable unknowns (D, r)."""
+    import numpy as np
+    import sympy as sp
+    from pinn_engine.data.synthetic import generate_fisher_kpp
+    tpl = get_template("fisher_kpp")
+    sys = tpl.system(); sys.validate()
+    assert set(tpl.truth) == {"D", "r"}
+    # logistic reaction term r*u*(1-u) present (expands to r*u - r*u**2)
+    s = str(sp.expand(sys.equations[0]))
+    assert "r*u" in s and "u**2" in s
+    # solver: u stays in [0,1] (a probability/concentration) and the front moves
+    data, truth = generate_fisher_kpp(D=0.5, r=1.0, seed=0)
+    inp, u = data["u_meas"]
+    assert np.isfinite(u).all()
+    assert u.min() > -0.05 and u.max() < 1.05
+    # front (u=0.5 crossing) at late t is to the right of its early position
+    t0 = inp[:, 1].min(); tL = inp[:, 1].max()
+    def front_x(tt):
+        m = np.abs(inp[:, 1] - tt) < 1e-6
+        xs = inp[m, 0]; us = u[m]
+        return float(xs[np.argmin(np.abs(us - 0.5))])
+    assert front_x(tL) > front_x(t0) + 1.0          # front advanced
 
 
 def test_burgers_solver_stable_and_nonlinear():

@@ -388,6 +388,54 @@ def generate_burgers_1d(
     return {"u_meas": (inp, u_noisy.ravel().astype(np.float32))}, {"nu": float(nu)}
 
 
+# -------------------------------------------------------------- Fisher-KPP reaction-diffusion
+
+
+def generate_fisher_kpp(
+    D: float = 0.5,
+    r: float = 1.0,
+    L: float = 20.0,
+    t_end: float = 8.0,
+    n_x: int = 128,
+    n_t: int = 60,
+    solver_nx: int = 400,
+    noise_std: float = 1e-2,
+    seed: int = 0,
+):
+    """Fisher-KPP reaction-diffusion ``u_t = D·u_xx + r·u(1−u)`` — population
+    genetics / ecology (spread of an advantageous gene or invasive species),
+    combustion, and tumour growth. A travelling front advances at the
+    KPP speed ``~2√(rD)`` with width ``~√(D/r)``; the two together identify ``D``
+    (diffusion) and ``r`` (growth rate) separately.
+
+    Domain ``x∈[0,L]``, IC a smooth front near ``x=3``, BCs ``u(0,t)=1``,
+    ``u(L,t)=0``. Ground truth from a stable method-of-lines solver (central
+    differences + stiff BDF). Returns a dense noisy ``u(x,t)`` grid; the inverse
+    problem recovers ``D`` and ``r``.
+    """
+    rng = np.random.default_rng(seed)
+    xf = np.linspace(0.0, L, solver_nx); dx = xf[1] - xf[0]
+    u0 = 0.5 * (1 - np.tanh((xf - 3.0) / 1.0))
+
+    def rhs(t, u):
+        uu = u.copy(); uu[0] = 1.0; uu[-1] = 0.0
+        uxx = np.zeros_like(uu); uxx[1:-1] = (uu[2:] - 2 * uu[1:-1] + uu[:-2]) / dx ** 2
+        du = D * uxx + r * uu * (1 - uu); du[0] = 0.0; du[-1] = 0.0
+        return du
+
+    te = np.linspace(0.0, t_end, n_t)
+    sol = solve_ivp(rhs, (0.0, t_end), u0, t_eval=te, method="BDF", rtol=1e-8, atol=1e-10)
+    if not sol.success:
+        raise RuntimeError(f"Fisher-KPP solve failed (D={D}, r={r}): {sol.message}")
+    idx = np.linspace(0, solver_nx - 1, n_x, dtype=int)
+    x = xf[idx]
+    Xg, Tg = np.meshgrid(x, te, indexing="ij")   # (n_x, n_t)
+    Uxt = sol.y[idx, :]                            # (n_x, n_t)
+    u_noisy = Uxt + rng.normal(0, noise_std, Uxt.shape)
+    inp = np.stack([Xg.ravel(), Tg.ravel()], axis=1).astype(np.float32)  # (x, t)
+    return {"u_meas": (inp, u_noisy.ravel().astype(np.float32))}, {"D": float(D), "r": float(r)}
+
+
 # -------------------------------------------------------------- Euler-Bernoulli beam (4th-order static)
 
 

@@ -64,6 +64,16 @@ Reverse chronological. Commit SHAs in parens. Major moments **bold**.
   0.13%; the nonlinearity is no obstacle for the inverse since dense data anchors
   the field. See `docs/burgers_experiments.md`. A reminder that the engine is a
   general inverse-PDE solver, not a rod-specific tool.
+- **`fisher_kpp` added — reaction-diffusion, a new domain.** Fisher-KPP
+  `u_t = D·u_xx + r·u(1−u)` (population genetics / ecology / combustion / tumour
+  growth) — the engine's first **logistic-reaction** term, a travelling front.
+  Honest split result: the **growth rate `r` recovers robustly (~1%)** (algebraic
+  reaction → directly pinned), but the **diffusion `D` is training-limited** — it
+  is *sub-dominant* to the reaction, so the PINN explains it away (drives D→0 to
+  the bound), the same failure mode as the rod sub-dominant coefficients
+  (contrast `diffusion_1d` where D is the sole term and recovers cleanly). D *is*
+  identifiable (direct FD regression on clean field → 0.501) but genuinely hard
+  under noise (lives in a 2nd derivative). See `docs/fisher_kpp_experiments.md`.
 
 ### Actuated dynamics (Jun 08, 2026)
 
@@ -989,7 +999,7 @@ All add Gaussian noise; all are reproducible from seed.
 
 ## Templates inventory
 
-13 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
+14 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
 
 | name | physics | unknowns | best result via engine |
 |---|---|---|---|
