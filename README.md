@@ -7,6 +7,8 @@ sensors consistent with your physics — with diagnostics, a Cramér-Rao preflig
 that tells you the data-theoretic best you can hope for, and a reproducibility
 manifest for every run.
 
+Official page: the13olympian.com
+
 For the full engineering reference (architecture, math, every knob, every
 template, the changelog of every R&D iteration), see [`docs/ENGINE.md`](docs/ENGINE.md).
 
