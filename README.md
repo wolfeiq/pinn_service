@@ -40,12 +40,14 @@ actually make them work in practice:
 
 ## Highlights / what's been validated
 
-Verified across **14 inverse templates** spanning very different physics:
+Verified across **17 inverse templates** spanning very different fields:
 
 - **Dynamics & chaos** — damped oscillator, pendulum, nonlinear/coupled drag,
   Lorenz system.
-- **Nonlinear PDEs** — diffusion, **Burgers'** (advection–diffusion, recovered
-  ν to 0.46%), **Fisher–KPP** (reaction–diffusion).
+- **PDEs** — diffusion, advection–diffusion (recovers velocity + diffusivity),
+  **Burgers'** (recovered ν to 0.46%), **Fisher–KPP** (reaction–diffusion),
+  **KdV** (dispersive 3rd-order soliton), and **Black–Scholes** — a *non-physics*
+  inverse PDE that recovers implied volatility from option prices.
 - **Structural mechanics** — elastic bar, Euler–Bernoulli beam, large-deflection
   elastica.
 - **A full soft-robotics Cosserat-rod stack** — planar & 3-D, static & dynamic
@@ -129,6 +131,9 @@ separating **data-limited** problems (raise the sensor quality) from
 | `diffusion_1d` | `u_t = D·u_xx` | D |
 | `burgers_1d` | `u_t + u·u_x = ν·u_xx` (advection–diffusion) | ν |
 | `fisher_kpp` | `u_t = D·u_xx + r·u(1−u)` (reaction–diffusion) | D, r |
+| `advection_diffusion_1d` | `u_t + v·u_x = D·u_xx` (transport) | v, D |
+| `kdv_1d` | `u_t + 6·u·u_x + δ·u_xxx = 0` (dispersive soliton, 3rd-order) | δ |
+| `black_scholes` | Black–Scholes option pricing (finance) | σ (implied volatility) |
 | `axial_elastic_bar` | `EA·u'' + p₀ = 0` (static elasticity) | EA |
 | `euler_bernoulli_beam` | `EI·w'''' = q₀` (linear beam) | EI |
 | `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave) | E |

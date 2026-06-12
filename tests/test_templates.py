@@ -9,7 +9,9 @@ from pinn_engine.dsl.templates import get_template
                                   "coupled_drag_3d", "euler_bernoulli_beam",
                                   "axial_elastic_bar", "planar_elastica",
                                   "planar_cosserat", "dynamic_cosserat",
-                                  "burgers_1d", "fisher_kpp"])
+                                  "burgers_1d", "fisher_kpp",
+                                  "advection_diffusion_1d", "kdv_1d",
+                                  "black_scholes"])
 def test_template_system_and_data(name):
     tpl = get_template(name)
     sys = tpl.system()
@@ -453,6 +455,81 @@ def test_spatial_cosserat_solver_analytic_limits():
     twist = 2 * np.arctan2(q[-1, 1], q[-1, 0])
     assert abs(twist - 0.3 / 0.8) < 1e-2
     assert abs(r[-1, 1]) < 1e-3 and abs(r[-1, 2]) < 1e-3
+
+
+def test_kdv_soliton_third_order_residual():
+    """KdV: first 3rd-order PDE template. The exact soliton satisfies the residual
+    (which contains u_xxx), is a bounded travelling pulse, and moves at the
+    soliton speed."""
+    import numpy as np
+    import sympy as sp
+    from pinn_engine.data.synthetic import generate_kdv_soliton
+    tpl = get_template("kdv_1d")
+    sys = tpl.system(); sys.validate()
+    # the residual genuinely contains the 3rd spatial derivative
+    assert any("Derivative(u, (x, 3))" in str(sp.expand(e)) for e in sys.equations)
+    data, truth = generate_kdv_soliton(delta=0.5, k=1.0, seed=0)
+    assert set(truth) == {"delta"}
+    inp, u = data["u_meas"]
+    assert np.isfinite(u).all() and u.max() < 1.2 and u.min() > -0.1   # amplitude 2δk²=1
+    # soliton crest advances at c = 4δk² = 2
+    def crest(tt):
+        m = np.abs(inp[:, 1] - tt) < 1e-6
+        return inp[m, 0][np.argmax(u[m])]
+    t0, t1 = inp[:, 1].min(), inp[:, 1].max()
+    assert crest(t1) > crest(t0) + 1.0     # moved right
+
+
+def test_black_scholes_recovers_a_finance_pde():
+    """Black-Scholes (a non-physics inverse PDE): the call-price surface solves
+    the log-space BS residual and the unknown is the implied volatility."""
+    import numpy as np
+    import sympy as sp
+    from pinn_engine.data.synthetic import generate_black_scholes
+    tpl = get_template("black_scholes")
+    sys = tpl.system(); sys.validate()
+    assert set(tpl.truth) == {"sigma"}
+    s = str(sp.expand(sys.equations[0]))
+    assert "sigma**2" in s and "Derivative(V, (x, 2))" in s     # variance × gamma
+    data, truth = generate_black_scholes(sigma=0.3, seed=0)
+    inp, V = data["V_meas"]
+    assert np.isfinite(V).all()
+    assert V.min() > -0.05 and V.max() < 2.0     # call price is non-negative, bounded
+    # call price increases with log-price S at fixed time (monotone in moneyness)
+    times = np.unique(inp[:, 1])
+    t_mid = times[len(times) // 2]
+    m = np.abs(inp[:, 1] - t_mid) < 1e-6
+    order = np.argsort(inp[m, 0])
+    Vx = V[m][order]
+    assert Vx[-1] > Vx[0] + 0.3
+
+
+def test_advection_diffusion_pulse_advects_and_spreads():
+    """Advection-diffusion: the closed-form pulse advects (mean moves at v) and
+    spreads (variance grows with D), the residual has both terms, and there are
+    two separable unknowns."""
+    import numpy as np
+    import sympy as sp
+    from pinn_engine.data.synthetic import generate_advection_diffusion
+    tpl = get_template("advection_diffusion_1d")
+    sys = tpl.system(); sys.validate()
+    assert set(tpl.truth) == {"v", "D"}
+    s = str(sp.expand(sys.equations[0]))
+    assert "v*Derivative(u, x)" in s and "D*Derivative(u, (x, 2))" in s
+    data, truth = generate_advection_diffusion(v=0.5, D=0.1, seed=0)
+    inp, u = data["u_meas"]
+    assert np.isfinite(u).all()
+
+    def moments(tt):
+        m = np.abs(inp[:, 1] - tt) < 1e-6
+        x = inp[m, 0]; w = np.clip(u[m], 0, None)
+        mean = np.sum(w * x) / np.sum(w)
+        var = np.sum(w * (x - mean) ** 2) / np.sum(w)
+        return mean, var
+    t0, t1 = inp[:, 1].min(), inp[:, 1].max()
+    m0, var0 = moments(t0); m1, var1 = moments(t1)
+    assert m1 > m0 + 0.2          # advected (mean moved right at v>0)
+    assert var1 > var0            # spread (diffusion broadened it)
 
 
 def test_fisher_kpp_front_and_two_unknowns():

@@ -202,6 +202,9 @@ def compute_template_crlb(template_name: str, perturb_rel: float = 1e-3) -> CRLB
         "dynamic_cosserat":      "generate_dynamic_cosserat",
         "burgers_1d":            "generate_burgers_1d",
         "fisher_kpp":            "generate_fisher_kpp",
+        "advection_diffusion_1d": "generate_advection_diffusion",
+        "kdv_1d":                "generate_kdv_soliton",
+        "black_scholes":         "generate_black_scholes",
     }
     gen_name = gen_map.get(template_name)
     if gen_name is None or not hasattr(syn_mod, gen_name):

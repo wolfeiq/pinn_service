@@ -52,6 +52,23 @@ Bundled with 9 reference templates (3 ODE-only, 1 partial-id ODE, 1 coupled
 
 Reverse chronological. Commit SHAs in parens. Major moments **bold**.
 
+### A PDE zoo — transport, dispersive, finance (Jun 12, 2026)
+
+- **Three new PDE classes** added to demonstrate the engine generalises far
+  beyond rods: `advection_diffusion_1d` (linear transport, recovers **both** v
+  and D to <1% — the pulse's motion and broadening separate the two cleanly),
+  `kdv_1d` (Korteweg-de Vries — the engine's **first 3rd-order / dispersive**
+  PDE, exact-soliton ground truth; the autograd path handles `u_xxx` cleanly, but
+  the dispersion **δ is PINN-training-limited** — explain-away on the
+  highest-order-derivative coefficient, the sharpest case yet; identifiable by FD
+  regression to 0.504. **Rule of thumb that emerges: in a multi-term PDE inverse,
+  the coefficient of the highest-order derivative is the hardest for a
+  collocation PINN, and severity grows with derivative order**), and
+  `black_scholes` (a **non-physics** inverse PDE —
+  recovers the **implied volatility σ** from a European-call price surface, ~3%;
+  same DSL, same CRLB preflight, an entirely different field). See
+  `docs/pde_zoo_experiments.md`.
+
 ### Beyond rods: nonlinear PDE templates (Jun 09, 2026)
 
 - **`burgers_1d` added — the deferred flagship, now cracked.** Viscous Burgers
@@ -999,7 +1016,7 @@ All add Gaussian noise; all are reproducible from seed.
 
 ## Templates inventory
 
-14 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
+17 bundled inverse templates (`pinn_engine/dsl/templates_lib/`):
 
 | name | physics | unknowns | best result via engine |
 |---|---|---|---|
@@ -1010,6 +1027,9 @@ All add Gaussian noise; all are reproducible from seed.
 | `coupled_drag_3d` | planar three-axis planar + Coriolis | c_lin, c_y, c_n | adaptive 1.8/22/6.6%; **0/1.4/0%** + L2 prior (full truth) |
 | `diffusion_1d` | `u_t = D·u_xx` | D | **1.6%** at 50 ep / **0.24%** at 200 ep / **0.10%** at 200 ep + L2 prior anchor=truth (= CRLB floor 0.063%) |
 | `burgers_1d` | `u_t + u·u_x = ν·u_xx` (nonlinear advection-diffusion) | ν | **0.46%** at 6000 ep (near CRLB floor 0.13%); stable conservative solver |
+| `advection_diffusion_1d` | `u_t + v·u_x = D·u_xx` (linear transport) | v, D | **v 0.1% / D 0.9%** by ep 1000 (CRLB 0.08%) |
+| `kdv_1d` | `u_t + 6·u·u_x + δ·u_xxx = 0` (dispersive, 3rd-order soliton) | δ | first 3rd-order template; δ **training-limited** (PINN explain-away on the highest-order coeff; identifiable — FD regression 0.504, CRLB 0.01%) |
+| `black_scholes` | `V_t + (r−σ²/2)V_x + (σ²/2)V_xx − rV = 0` (finance) | σ (implied vol) | **~3%** (CRLB 0.04%); non-physics inverse PDE |
 | `cosserat_rod` | `ρ·u_tt = E·u_ss` (wave) | E_unit | **4.5%** (hand-tuned two-phase, run #16); 8% (adaptive, cap-limited) |
 | `axial_elastic_bar` | `EA·u'' + p₀ = 0` (static, clamped-free) | EA_unit | **0.26%** in 24 s on CPU (near CRLB 0.03%) |
 | `euler_bernoulli_beam` | `EI·w'''' = q₀` (static, simply-supported) | EI_unit | training-limited (CRLB 0.10%; engine convergence is slow on the 4th-order autograd path) |

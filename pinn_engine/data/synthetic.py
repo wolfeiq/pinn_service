@@ -388,6 +388,132 @@ def generate_burgers_1d(
     return {"u_meas": (inp, u_noisy.ravel().astype(np.float32))}, {"nu": float(nu)}
 
 
+# -------------------------------------------------------------- Black-Scholes (quantitative finance)
+
+
+def generate_black_scholes(
+    sigma: float = 0.3,
+    r: float = 0.05,
+    K: float = 1.0,
+    T: float = 1.0,
+    x_lo: float = None,
+    x_hi: float = None,
+    t_end: float = 0.9,
+    n_x: int = 80,
+    n_t: int = 60,
+    noise_std: float = 1e-3,
+    seed: int = 0,
+):
+    """Black-Scholes option-pricing PDE — a **non-physics** inverse problem
+    (quantitative finance). In log-price ``x = ln(S)`` it is constant-coefficient::
+
+        V_t + (r − σ²/2)·V_x + (σ²/2)·V_xx − r·V = 0
+
+    where ``V(x,t)`` is a European-call price, ``r`` the (known) risk-free rate,
+    ``K`` strike, ``T`` expiry. Ground truth is the **exact Black-Scholes call**
+    formula. The inverse recovers the **implied volatility ``σ``** from observed
+    option prices ``V(x,t)`` — exactly the quantity traders back out of the
+    market. ``σ`` enters as ``σ²`` (the variance), in both the drift and the
+    diffusion term.
+
+    Demonstrates the engine generalises beyond physics: same DSL, same solver.
+    Returns a dense noisy ``V(x,t)`` grid; truth is ``{"sigma": σ}``.
+    """
+    from scipy.stats import norm
+    rng = np.random.default_rng(seed)
+    if x_lo is None:
+        x_lo = float(np.log(0.4 * K))
+    if x_hi is None:
+        x_hi = float(np.log(2.5 * K))
+    x = np.linspace(x_lo, x_hi, n_x); t = np.linspace(0.0, t_end, n_t)
+    Xg, Tg = np.meshgrid(x, t, indexing="ij")        # (n_x, n_t)
+    tau = T - Tg
+    S = np.exp(Xg)
+    d1 = (Xg - np.log(K) + (r + 0.5 * sigma ** 2) * tau) / (sigma * np.sqrt(tau))
+    d2 = d1 - sigma * np.sqrt(tau)
+    V = S * norm.cdf(d1) - K * np.exp(-r * tau) * norm.cdf(d2)
+    v_noisy = V + rng.normal(0, noise_std, V.shape)
+    inp = np.stack([Xg.ravel(), Tg.ravel()], axis=1).astype(np.float32)   # (x, t)
+    return {"V_meas": (inp, v_noisy.ravel().astype(np.float32))}, {"sigma": float(sigma)}
+
+
+# -------------------------------------------------------------- KdV (dispersive, 3rd-order)
+
+
+def generate_kdv_soliton(
+    delta: float = 0.5,
+    k: float = 1.0,
+    a: float = -3.0,
+    L: float = 8.0,
+    t_end: float = 2.0,
+    n_x: int = 96,
+    n_t: int = 60,
+    noise_std: float = 5e-3,
+    seed: int = 0,
+):
+    """Korteweg-de Vries ``u_t + 6·u·u_x + δ·u_xxx = 0`` — the canonical
+    **dispersive, nonlinear, 3rd-order** PDE (shallow-water waves, plasma,
+    optical fibres), famous for **solitons**: localized waves where nonlinear
+    steepening balances dispersion.
+
+    Ground truth is the **exact single-soliton** solution (no solver needed)::
+
+        u(x,t) = 2·δ·k²·sech²(k·(x − c·t − a)),   c = 4·δ·k²
+
+    — amplitude ``2δk²``, width ``1/k``, speed ``c=4δk²``. The dispersion ``δ`` is
+    a *leading-order* term (comparable to advection here), so it identifies
+    cleanly. Domain ``x∈[−L,L]``, ``t∈[0,t_end]``. Returns a dense noisy
+    ``u(x,t)`` grid; the inverse recovers ``δ``.
+    """
+    rng = np.random.default_rng(seed)
+    A = 2.0 * delta * k ** 2
+    c = 4.0 * delta * k ** 2
+    x = np.linspace(-L, L, n_x); t = np.linspace(0.0, t_end, n_t)
+    Xg, Tg = np.meshgrid(x, t, indexing="ij")        # (n_x, n_t)
+    U = A / np.cosh(k * (Xg - c * Tg - a)) ** 2
+    u_noisy = U + rng.normal(0, noise_std, U.shape)
+    inp = np.stack([Xg.ravel(), Tg.ravel()], axis=1).astype(np.float32)   # (x, t)
+    return {"u_meas": (inp, u_noisy.ravel().astype(np.float32))}, {"delta": float(delta)}
+
+
+# -------------------------------------------------------------- advection-diffusion (transport)
+
+
+def generate_advection_diffusion(
+    v: float = 0.5,
+    D: float = 0.1,
+    x0: float = -1.0,
+    t0: float = 0.3,
+    L: float = 2.0,
+    t_end: float = 1.0,
+    n_x: int = 80,
+    n_t: int = 60,
+    noise_std: float = 1e-2,
+    seed: int = 0,
+):
+    """Linear advection-diffusion ``u_t + v·u_x = D·u_xx`` — the canonical
+    transport PDE (contaminant in a flow, heat in a moving medium). A Gaussian
+    pulse **advects** at velocity ``v`` and **spreads** with diffusivity ``D``;
+    the two effects are separable from the data (mean motion ↔ v, broadening
+    ↔ D), so both are identifiable.
+
+    Closed-form solution (the advected heat kernel)::
+
+        u(x,t) = exp(−(x − v·t − x0)² / (4D(t+t0))) / √(4πD(t+t0))
+
+    Domain ``x∈[−L, L]``, ``t∈[0, t_end]``. Returns a dense noisy ``u(x,t)`` grid;
+    the inverse recovers ``v`` and ``D``.
+    """
+    rng = np.random.default_rng(seed)
+    x = np.linspace(-L, L, n_x); t = np.linspace(0.0, t_end, n_t)
+    Xg, Tg = np.meshgrid(x, t, indexing="ij")        # (n_x, n_t)
+    s = 4.0 * D * (Tg + t0)
+    U = np.exp(-(Xg - v * Tg - x0) ** 2 / s) / np.sqrt(np.pi * s)
+    u_noisy = U + rng.normal(0, noise_std, U.shape)
+    inp = np.stack([Xg.ravel(), Tg.ravel()], axis=1).astype(np.float32)   # (x, t)
+    return {"u_meas": (inp, u_noisy.ravel().astype(np.float32))}, {"v": float(v), "D": float(D)}
+
+
 # -------------------------------------------------------------- Fisher-KPP reaction-diffusion
 
 

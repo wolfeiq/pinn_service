@@ -13,5 +13,8 @@ from pinn_engine.dsl.templates_lib import (
     planar_cosserat,
     dynamic_cosserat,
     burgers_1d,
-    fisher_kpp,  # noqa: F401
+    fisher_kpp,
+    advection_diffusion_1d,
+    kdv_1d,
+    black_scholes,  # noqa: F401
 )  # noqa: F401
